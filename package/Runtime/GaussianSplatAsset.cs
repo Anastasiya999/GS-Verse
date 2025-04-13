@@ -4,6 +4,9 @@ using System;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
+using System.Collections.Generic;
+using Unity.Collections;
+
 using UnityEngine.Experimental.Rendering;
 
 namespace GaussianSplatting.Runtime
@@ -100,7 +103,7 @@ namespace GaussianSplatting.Runtime
             public ushort shPadding; // pad to multiple of 4 bytes
         }
 
-        public void Initialize(int splats, VectorFormat formatPos, VectorFormat formatScale, ColorFormat formatColor, SHFormat formatSh, Vector3 bMin, Vector3 bMax, CameraInfo[] cameraInfos)
+        public void Initialize(int splats, VectorFormat formatPos, VectorFormat formatScale, ColorFormat formatColor, SHFormat formatSh, Vector3 bMin, Vector3 bMax, CameraInfo[] cameraInfos, List<List<List<float>>> alphas)
         {
             m_SplatCount = splats;
             m_FormatVersion = kCurrentVersion;
@@ -111,6 +114,19 @@ namespace GaussianSplatting.Runtime
             m_Cameras = cameraInfos;
             m_BoundsMin = bMin;
             m_BoundsMax = bMax;
+            m_alphas = alphas;
+        }
+
+        Hash128 ComputeHashFromNativeArray(NativeArray<uint> data)
+        {
+            byte[] byteArray = new byte[data.Length * sizeof(uint)];
+            System.Buffer.BlockCopy(data.ToArray(), 0, byteArray, 0, byteArray.Length);
+            return Hash128.Compute(Convert.ToBase64String(byteArray)); // use string overload
+        }
+
+        Hash128 ComputeHash(byte[] data)
+        {
+            return Hash128.Compute(data);
         }
 
         public void SetDataHash(Hash128 hash)
@@ -118,13 +134,42 @@ namespace GaussianSplatting.Runtime
             m_DataHash = hash;
         }
 
-        public void SetAssetFiles(TextAsset dataChunk, TextAsset dataPos, TextAsset dataOther, TextAsset dataColor, TextAsset dataSh)
+        public void SetAssetFiles(TextAsset dataChunk, TextAsset dataPos, TextAsset dataOther, TextAsset dataColor, TextAsset dataSh, TextAsset dataAlpha, TextAsset dataScale)
         {
             m_ChunkData = dataChunk;
             m_PosData = dataPos;
+            m_AlphaData = dataAlpha;
+            m_ScaleData = dataScale;
             m_OtherData = dataOther;
             m_ColorData = dataColor;
             m_SHData = dataSh;
+            // Debugging the length of the data in the TextAsset
+            Debug.Log($"Data length in dataPos: {dataPos.bytes.Length}");
+            Debug.Log($"TextAsset data (first few bytes): {BitConverter.ToString(dataPos.bytes, 0, 16)}");
+
+            // Try to assign the rawPosData directly from the TextAsset
+            try
+            {
+                m_rawPosData = dataPos.GetData<uint>();
+                Debug.Log("Raw position data successfully set.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to set raw position data: {ex.Message}");
+            }
+
+            // Try to assign the rawPosData directly from the TextAsset
+            try
+            {
+                m_rawOtherData = dataOther.GetData<uint>();
+                Debug.Log("Raw other data successfully set.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to set raw other data: {ex.Message}");
+            }
+
+
         }
 
         public static int GetOtherSizeNoSHIndex(VectorFormat scaleFormat)
@@ -149,7 +194,7 @@ namespace GaussianSplatting.Runtime
             };
         }
 
-        public static (int,int) CalcTextureSize(int splatCount)
+        public static (int, int) CalcTextureSize(int splatCount)
         {
             int width = kTextureWidth;
             int height = math.max(1, (splatCount + width - 1) / width);
@@ -208,6 +253,10 @@ namespace GaussianSplatting.Runtime
         [SerializeField] ColorFormat m_ColorFormat;
 
         [SerializeField] TextAsset m_PosData;
+
+        [SerializeField] TextAsset m_AlphaData;
+
+        [SerializeField] TextAsset m_ScaleData;
         [SerializeField] TextAsset m_ColorData;
         [SerializeField] TextAsset m_OtherData;
         [SerializeField] TextAsset m_SHData;
@@ -216,17 +265,93 @@ namespace GaussianSplatting.Runtime
 
         [SerializeField] CameraInfo[] m_Cameras;
 
+        [SerializeField] List<List<List<float>>> m_alphas;
+
+        [SerializeField] NativeArray<uint> m_rawPosData;
+        [SerializeField] NativeArray<uint> m_rawOtherData;
+        [SerializeField] bool m_rawPosDataIsOwned;
+        [SerializeField] bool m_rawOtherDataIsOwned;
+
         public VectorFormat posFormat => m_PosFormat;
         public VectorFormat scaleFormat => m_ScaleFormat;
         public SHFormat shFormat => m_SHFormat;
         public ColorFormat colorFormat => m_ColorFormat;
 
         public TextAsset posData => m_PosData;
+
+        public NativeArray<uint> rawPosData
+        {
+            get
+            {
+                if (!m_rawPosData.IsCreated && m_PosData != null && m_PosData.bytes.Length > 0)
+                {
+                    Debug.LogWarning("rawPosData was not initialized — initializing now from m_PosData.");
+                    try
+                    {
+                        m_rawPosData = m_PosData.GetData<uint>();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"Failed to initialize rawPosData lazily: {ex.Message}");
+                    }
+                }
+
+                return m_rawPosData;
+            }
+            set
+            {
+                // Only dispose if it's valid and not coming from GetData (you can track if needed)
+                if (m_rawPosData.IsCreated && m_rawPosDataIsOwned)
+                    m_rawPosData.Dispose();
+
+                m_rawPosData = value;
+                m_rawPosDataIsOwned = true; // Because setter is used, we assume you own it
+                SetDataHash(ComputeHashFromNativeArray(value));
+
+            }
+        }
+
+        public NativeArray<uint> rawOtherData
+        {
+            get
+            {
+                if (!m_rawOtherData.IsCreated && m_OtherData != null && m_OtherData.bytes.Length > 0)
+                {
+                    Debug.LogWarning("rawOtherData was not initialized — initializing now from m_OtherData.");
+                    try
+                    {
+                        m_rawOtherData = m_OtherData.GetData<uint>();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"Failed to initialize rawOtherData lazily: {ex.Message}");
+                    }
+                }
+
+                return m_rawOtherData;
+            }
+            set
+            {
+                // Only dispose if it's valid and not coming from GetData (you can track if needed)
+                if (m_rawOtherData.IsCreated && m_rawOtherDataIsOwned)
+                    m_rawPosData.Dispose();
+
+                m_rawOtherData = value;
+                m_rawOtherDataIsOwned = true; // Because setter is used, we assume you own it
+                SetDataHash(ComputeHashFromNativeArray(value));
+
+            }
+        }
+
+        public TextAsset alphaData => m_AlphaData;
+        public TextAsset scaleData => m_ScaleData;
         public TextAsset colorData => m_ColorData;
         public TextAsset otherData => m_OtherData;
         public TextAsset shData => m_SHData;
         public TextAsset chunkData => m_ChunkData;
         public CameraInfo[] cameras => m_Cameras;
+
+        public List<List<List<float>>> alphas => m_alphas;
 
         public struct ChunkInfo
         {

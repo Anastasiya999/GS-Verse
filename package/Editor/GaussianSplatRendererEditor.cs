@@ -178,7 +178,7 @@ namespace GaussianSplatting.Editor
                 return;
             }
 
-            var targetGs = (GaussianSplatRenderer) target;
+            var targetGs = (GaussianSplatRenderer)target;
             if (!targetGs || !targetGs.HasValidAsset || !targetGs.isActiveAndEnabled)
             {
                 EditorGUILayout.HelpBox($"Can't merge into {target.name} (no asset or disable)", MessageType.Warning);
@@ -215,7 +215,7 @@ namespace GaussianSplatting.Editor
             CountTargetSplats(out var totalSplats, out _);
             if (totalSplats > GaussianSplatAsset.kMaxSplats)
                 return;
-            var targetGs = (GaussianSplatRenderer) target;
+            var targetGs = (GaussianSplatRenderer)target;
 
             int copyDstOffset = targetGs.splatCount;
             targetGs.EditSetSplatCount(totalSplats);
@@ -374,7 +374,7 @@ namespace GaussianSplatting.Editor
             return TransformBounds(gs.transform, bounds);
         }
 
-        public static Bounds TransformBounds(Transform tr, Bounds bounds )
+        public static Bounds TransformBounds(Transform tr, Bounds bounds)
         {
             var center = tr.TransformPoint(bounds.center);
 

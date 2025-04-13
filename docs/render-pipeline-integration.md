@@ -3,6 +3,7 @@
 ### Which Unity render pipelines are supported?
 
 "All of them" is a simple answer. More details:
+
 - I am mostly developing and testing with the built-in render pipeline (BiRP). This one does not need any extra setup;
   just have `GaussianSplatRenderer` components.
 - URP: add `GaussianSplatURPFeature` to the URP renderer settings.

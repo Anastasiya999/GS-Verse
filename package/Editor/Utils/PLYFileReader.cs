@@ -107,7 +107,7 @@ namespace GaussianSplatting.Editor.Utils
             }
             // if line had CRLF line endings, remove the CR part
             if (byteBuffer.Count > 0 && byteBuffer.Last() == '\r')
-                byteBuffer.RemoveAt(byteBuffer.Count-1);
+                byteBuffer.RemoveAt(byteBuffer.Count - 1);
             return Encoding.UTF8.GetString(byteBuffer.ToArray());
         }
     }

@@ -31,9 +31,9 @@ namespace GaussianSplatting.Runtime
 
         public struct Args
         {
-            public uint             count;
-            public GraphicsBuffer   inputKeys;
-            public GraphicsBuffer   inputValues;
+            public uint count;
+            public GraphicsBuffer inputKeys;
+            public GraphicsBuffer inputValues;
             public SupportResources resources;
             internal int workGroupCount;
         }
@@ -48,7 +48,7 @@ namespace GaussianSplatting.Runtime
             public static SupportResources Load(uint count)
             {
                 //This is threadBlocks * DEVICE_RADIX_SORT_RADIX
-                uint scratchBufferSize = DivRoundUp(count, DEVICE_RADIX_SORT_PARTITION_SIZE) * DEVICE_RADIX_SORT_RADIX; 
+                uint scratchBufferSize = DivRoundUp(count, DEVICE_RADIX_SORT_PARTITION_SIZE) * DEVICE_RADIX_SORT_RADIX;
                 uint reducedScratchBufferSize = DEVICE_RADIX_SORT_RADIX * DEVICE_RADIX_SORT_PASSES;
 
                 var target = GraphicsBuffer.Target.Structured;
