@@ -103,6 +103,11 @@ namespace GaussianSplatting.Runtime
             public ushort shPadding; // pad to multiple of 4 bytes
         }
 
+        private void OnEnable()
+        {
+            isRawChunkDataIsCreated = false;
+        }
+
         public void Initialize(int splats, VectorFormat formatPos, VectorFormat formatScale, ColorFormat formatColor, SHFormat formatSh, Vector3 bMin, Vector3 bMax, CameraInfo[] cameraInfos, List<List<List<float>>> alphas)
         {
             m_SplatCount = splats;
@@ -167,6 +172,16 @@ namespace GaussianSplatting.Runtime
             catch (Exception ex)
             {
                 Debug.LogError($"Failed to set raw other data: {ex.Message}");
+            }
+
+            try
+            {
+                m_rawChunkData = dataChunk.GetData<ChunkInfo>();
+                Debug.Log("Raw chunk data successfully set.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to set raw chunk data: {ex.Message}");
             }
 
 
@@ -269,8 +284,10 @@ namespace GaussianSplatting.Runtime
 
         [SerializeField] NativeArray<uint> m_rawPosData;
         [SerializeField] NativeArray<uint> m_rawOtherData;
+        [SerializeField] NativeArray<ChunkInfo> m_rawChunkData;
         [SerializeField] bool m_rawPosDataIsOwned;
         [SerializeField] bool m_rawOtherDataIsOwned;
+        [SerializeField] bool m_rawChunkDataIsOwned;
 
         public VectorFormat posFormat => m_PosFormat;
         public VectorFormat scaleFormat => m_ScaleFormat;
@@ -343,12 +360,47 @@ namespace GaussianSplatting.Runtime
             }
         }
 
+
+
         public TextAsset alphaData => m_AlphaData;
         public TextAsset scaleData => m_ScaleData;
         public TextAsset colorData => m_ColorData;
         public TextAsset otherData => m_OtherData;
         public TextAsset shData => m_SHData;
         public TextAsset chunkData => m_ChunkData;
+
+        private NativeArray<ChunkInfo> _rawChunkData;
+        private bool isRawChunkDataIsCreated = false;
+
+        public NativeArray<ChunkInfo> rawChunkData
+        {
+            get => _rawChunkData;
+            set
+            {
+                // Dispose old data if allocated
+                if (_rawChunkData.IsCreated)
+                    _rawChunkData.Dispose();
+
+                _rawChunkData = value;
+            }
+        }
+
+        public void SetRawChunkDataCreated(bool value)
+        {
+            isRawChunkDataIsCreated = value;
+        }
+
+        public bool GetRawChunkDataCreated()
+        {
+            return isRawChunkDataIsCreated;
+        }
+
+
+        private void OnDestroy()
+        {
+            if (_rawChunkData.IsCreated)
+                _rawChunkData.Dispose();
+        }
         public CameraInfo[] cameras => m_Cameras;
 
         public List<List<List<float>>> alphas => m_alphas;

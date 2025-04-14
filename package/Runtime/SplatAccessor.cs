@@ -135,7 +135,7 @@ public class SplatAccessor : MonoBehaviour
 
         ReorderMorton(splatPosData, boundsMin, boundsMax);
         LinearizeData(splatPosData);
-        CreateChunkData(splatPosData);
+        var chunks = CreateChunkData(splatPosData, _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
 
         int dataLen = splatPosData.Length * GaussianSplatAsset.GetVectorSize(m_FormatPos);
         dataLen = NextMultipleOf(dataLen, 8);
@@ -154,11 +154,19 @@ public class SplatAccessor : MonoBehaviour
 
         var convertedPos = ReinterpretByteArrayAsUint(data);
         var convertedOther = ReinterpretByteArrayAsUint(otherData);
+        Debug.Log($"was created? {_splatRenderer.asset.GetRawChunkDataCreated()}");
 
         _splatRenderer.asset.rawPosData = convertedPos;
         _splatRenderer.asset.rawOtherData = convertedOther;
+        _splatRenderer.asset.rawChunkData = _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>();
+        _splatRenderer.asset.SetRawChunkDataCreated(true);
+        _splatRenderer.asset.rawChunkData = chunks;
 
+        Debug.Log($"chunk data size {_splatRenderer.asset.rawChunkData.Length}");
+
+        //chunks.Dispose();
         data.Dispose();
+
 
     }
 
@@ -381,18 +389,19 @@ public class SplatAccessor : MonoBehaviour
     }
 
 
-    static void CreateChunkData(NativeArray<InputSplatRuntimeData> splatData)
+    static NativeArray<GaussianSplatAsset.ChunkInfo> CreateChunkData(NativeArray<InputSplatRuntimeData> splatData, NativeArray<GaussianSplatAsset.ChunkInfo> prevChunks)
     {
         int chunkCount = (splatData.Length + GaussianSplatAsset.kChunkSize - 1) / GaussianSplatAsset.kChunkSize;
         CalcChunkDataJob job = new CalcChunkDataJob
         {
             splatPositions = splatData,
             chunks = new(chunkCount, Allocator.TempJob),
+            prevChunks = prevChunks
         };
 
         job.Schedule(chunkCount, 8).Complete();
 
-        job.chunks.Dispose();
+        return job.chunks;
     }
 
     public static NativeArray<float3> ConvertToFloat3Array(NativeArray<Vector3> input, Allocator allocator)
@@ -409,10 +418,12 @@ public class SplatAccessor : MonoBehaviour
     struct CalcChunkDataJob : IJobParallelFor
     {
         [NativeDisableParallelForRestriction] public NativeArray<InputSplatRuntimeData> splatPositions;
+        [ReadOnly] public NativeArray<GaussianSplatAsset.ChunkInfo> prevChunks;
         public NativeArray<GaussianSplatAsset.ChunkInfo> chunks;
 
         public void Execute(int chunkIdx)
         {
+            GaussianSplatAsset.ChunkInfo prevInfo = prevChunks[chunkIdx];
 
             float3 chunkMinpos = float.PositiveInfinity;
             float3 chunkMinscl = float.PositiveInfinity;
@@ -451,6 +462,17 @@ public class SplatAccessor : MonoBehaviour
             info.sclX = math.f32tof16(chunkMinscl.x) | (math.f32tof16(chunkMaxscl.x) << 16);
             info.sclY = math.f32tof16(chunkMinscl.y) | (math.f32tof16(chunkMaxscl.y) << 16);
             info.sclZ = math.f32tof16(chunkMinscl.z) | (math.f32tof16(chunkMaxscl.z) << 16);
+            // Reuse color data from previous chunk
+            info.colR = prevInfo.colR;
+            info.colG = prevInfo.colG;
+            info.colB = prevInfo.colB;
+            info.colA = prevInfo.colA;
+
+            // Reuse SH coefficients from previous chunk
+            info.shR = prevInfo.shR;
+            info.shG = prevInfo.shG;
+            info.shB = prevInfo.shB;
+
 
             chunks[chunkIdx] = info;
 
@@ -706,6 +728,44 @@ public class SplatAccessor : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
+        var faceVertices = ProcessModifiedMesh(gameObject);
+        _splatRenderer = GameObject.FindGameObjectWithTag("SplatRenderer").GetComponent<GaussianSplatRenderer>();
+        if (_splatRenderer.asset.alphaData != null)
+        {
+            // Get the raw bytes from the TextAsset
+            byte[] fileBytes = _splatRenderer.asset.alphaData.bytes;
+            byte[] fileScaleBytes = _splatRenderer.asset.scaleData.bytes;
+            var decodedAlphas = DecodeAlphasv2(fileBytes, faceVertices.Count / 3);
+            var decodedScales = DecodeScales(fileScaleBytes, _splatRenderer.asset.splatCount);
 
+
+            var xyzValues = SplatMathUtils.ToNativeArray(SplatMathUtils.CalculateXYZ(faceVertices, 5, decodedAlphas));
+            var (rotations, scalings) = SplatMathUtils.GenerateRotationsAndScalesNative(faceVertices, decodedScales, 5, Allocator.TempJob);
+
+            NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.TempJob);
+
+            var job = new CreateAssetDataJob()
+            {
+                m_InputPos = xyzValues,
+                m_InputRot = rotations,
+                m_InputScale = scalings,
+                m_Output = inputSplatsData
+            };
+            job.Schedule(xyzValues.Length, 8192).Complete();
+
+
+            CreateAsset(inputSplatsData);
+
+
+            rotations.Dispose();
+            scalings.Dispose();
+            inputSplatsData.Dispose();
+            xyzValues.Dispose();
+
+        }
+        else
+        {
+            Debug.LogError("posData is missing in GaussianSplatAsset!");
+        }
     }
 }

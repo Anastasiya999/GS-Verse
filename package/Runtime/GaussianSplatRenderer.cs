@@ -409,6 +409,13 @@ namespace GaussianSplatting.Runtime
                 { name = "GaussianChunkData" };
                 m_GpuChunksValid = false;
             }
+            if (asset.GetRawChunkDataCreated())
+            {
+                Debug.Log($"chunk created new {asset.rawChunkData.Length}");
+                m_GpuChunks.SetData(asset.rawChunkData);
+
+            }
+
 
             m_GpuView = new GraphicsBuffer(GraphicsBuffer.Target.Structured, m_Asset.splatCount, kGpuViewDataSize);
             m_GpuIndexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Index, 36, 2);
