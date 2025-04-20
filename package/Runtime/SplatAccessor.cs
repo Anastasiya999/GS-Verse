@@ -18,111 +18,148 @@ public class SplatAccessor : MonoBehaviour
     private MeshFilter _meshFilter;
     private Mesh _mesh;
 
+    Mesh deformingMesh;
+    public float springForce = 20f;
+    float uniformScale = 1f;
+    public float damping = 5f;
+
+    Vector3[] originalVertices, displacedVertices;
+    Vector3[] transformedOriginalVertices, transformedDisplacedVertices;
+    Vector3[] vertexVelocities;
+    List<List<List<float>>> decodedAlphas;
+
+    NativeArray<float3> decodedAlphasNative;
+    List<float> decodedScales;
+    NativeArray<float> decodedScalesNative;
 
     void Start()
     {
-
-        var faceVertices = ProcessModifiedMesh(gameObject);
         _splatRenderer = GameObject.FindGameObjectWithTag("SplatRenderer").GetComponent<GaussianSplatRenderer>();
         if (_splatRenderer.asset.alphaData != null)
         {
-            // Get the raw bytes from the TextAsset
+
             byte[] fileBytes = _splatRenderer.asset.alphaData.bytes;
             byte[] fileScaleBytes = _splatRenderer.asset.scaleData.bytes;
-            var decodedAlphas = DecodeAlphasv2(fileBytes, faceVertices.Count / 3);
-            var decodedScales = DecodeScales(fileScaleBytes, _splatRenderer.asset.splatCount);
-
-
-            var xyzValues = SplatMathUtils.ToNativeArray(SplatMathUtils.CalculateXYZ(faceVertices, 5, decodedAlphas));
-            var (rotations, scalings) = SplatMathUtils.GenerateRotationsAndScalesNative(faceVertices, decodedScales, 5, Allocator.TempJob);
-
-            NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.TempJob);
-
-            var job = new CreateAssetDataJob()
-            {
-                m_InputPos = xyzValues,
-                m_InputRot = rotations,
-                m_InputScale = scalings,
-                m_Output = inputSplatsData
-            };
-            job.Schedule(xyzValues.Length, 8192).Complete();
-
-
-            CreateAsset(inputSplatsData);
-
-
-            rotations.Dispose();
-            scalings.Dispose();
-            inputSplatsData.Dispose();
-            xyzValues.Dispose();
+            decodedAlphasNative = DecodeAlphasToNativeFloat3(fileBytes, _splatRenderer.asset.splatCount / 5, 5, Allocator.Persistent);
+            decodedScalesNative = DecodeScalesToNative(fileScaleBytes, _splatRenderer.asset.splatCount, Allocator.Persistent);
 
         }
         else
         {
             Debug.LogError("posData is missing in GaussianSplatAsset!");
         }
+        //GetComponent<MeshRenderer>().enabled = false; // Hide the mesh
+        uniformScale = transform.localScale.x;
+        deformingMesh = GetComponent<MeshFilter>().mesh;
+        originalVertices = deformingMesh.vertices;
+
+        transformedOriginalVertices = SplatMathUtils.TransformVertices(deformingMesh.vertices);
+        displacedVertices = new Vector3[originalVertices.Length];
+        transformedDisplacedVertices = new Vector3[originalVertices.Length];
+        for (int i = 0; i < originalVertices.Length; i++)
+        {
+            displacedVertices[i] = originalVertices[i];
+            transformedDisplacedVertices[i] = transformedOriginalVertices[i];
+        }
+        vertexVelocities = new Vector3[originalVertices.Length];
+
     }
 
 
 
-    public List<Vector3> ProcessModifiedMesh(GameObject gameObject)
+    // Update is called once per frame
+    void Update()
     {
-
-        MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
-
-        Mesh mesh = meshFilter.sharedMesh;
-        Vector3[] vertices = mesh.vertices;
-
-        // 2. Modify vertex positions (example: move all vertices up by 0.5 units)
-        for (int i = 0; i < vertices.Length; i++)
+        for (int i = 0; i < displacedVertices.Length; i++)
         {
-            vertices[i] += Vector3.up * 0.5f;
+            UpdateVertex(i);
         }
+        deformingMesh.vertices = displacedVertices;
+        //transformedOriginalVertices = transformedDisplacedVertices;
+        deformingMesh.RecalculateNormals();
+
+        var faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, transformedDisplacedVertices, Allocator.Persistent);
+        var xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / 5, 5);
+        var (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, 5);
 
 
-        mesh.vertices = vertices;
-        mesh.RecalculateNormals();
-        mesh.RecalculateBounds();
+        NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.Persistent);
 
-        return SplatMathUtils.GetMeshFaceVertices(gameObject);
+        var job = new CreateAssetDataJob()
+        {
+            m_InputPos = xyzValues,
+            m_InputRot = rotations,
+            m_InputScale = scalings,
+            m_Output = inputSplatsData
+        };
+        job.Schedule(xyzValues.Length, 8192).Complete();
+
+
+        CreateAsset(inputSplatsData);
+
+
+        rotations.Dispose();
+        scalings.Dispose();
+        inputSplatsData.Dispose();
+        xyzValues.Dispose();
+        faceVertices.Dispose();
+
     }
 
-    public static void CompareFirst100Values(NativeArray<uint> posDataArray1, NativeArray<uint> posDataArray2)
+    void UpdateVertex(int i)
     {
-        // Ensure both arrays have the same size
-        if (posDataArray1.Length != posDataArray2.Length)
+
+
+        Vector3 velocity = vertexVelocities[i];
+        Vector3 displacement = displacedVertices[i] - originalVertices[i];
+        displacement *= uniformScale;
+        velocity -= displacement * springForce * Time.deltaTime;
+        velocity *= 1f - damping * Time.deltaTime;
+        vertexVelocities[i] = velocity;
+
+        // TODO: with raycasting, refactor
+
+        /*
+     
+        displacedVertices[i] += velocity * (Time.deltaTime / uniformScale);
+        transformedDisplacedVertices[i] += velocity * (Time.deltaTime / uniformScale);
+        */
+
+
+        // displacedVertices[i] = originalVertices[i] + new Vector3(0, Mathf.Sin(Time.time + originalVertices[i].x), 0);
+        displacedVertices[i] = originalVertices[i] + new Vector3(originalVertices[i].x * Mathf.Sin(Time.time), 0, originalVertices[i].z * Mathf.Sin(Time.time));
+        transformedDisplacedVertices[i] = transformedOriginalVertices[i] + new Vector3(transformedOriginalVertices[i].x * Mathf.Sin(Time.time), 0, transformedOriginalVertices[i].z * Mathf.Sin(Time.time));
+
+
+        // displacedVertices[i] += Vector3.up * 0.45f;
+        // transformedDisplacedVertices[i] += new Vector3(0, 0, 1) * 0.45f;
+
+
+        Debug.DrawLine(transform.TransformPoint(originalVertices[i]),
+                  transform.TransformPoint(displacedVertices[i]), Color.red);
+    }
+
+    public void AddDeformingForce(Vector3 point, float force)
+    {
+        for (int i = 0; i < displacedVertices.Length; i++)
         {
-            Debug.LogError("Arrays have different sizes! Cannot compare.");
-            return;
+            AddForceToVertex(i, point, force);
         }
+        Debug.DrawLine(Camera.main.transform.position, point);
+    }
 
-        // Determine the maximum number of elements to compare (100 or the length of the shortest array)
-        int compareLength = 100;
+    void AddForceToVertex(int i, Vector3 point, float force)
+    {
+        point = transform.InverseTransformPoint(point);
+        Vector3 pointToVertex = displacedVertices[i] - point;
 
-        // Iterate through both arrays and compare the first 100 elements
-        for (int i = 0; i < compareLength; i++)
-        {
-            uint value1 = posDataArray1[i];
-            uint value2 = posDataArray2[i];
-
-            if (value1 != value2)
-            {
-                uint difference = value1 ^ value2; // XOR to see how they differ (bitwise)
-                Debug.Log($"Difference at Index {i}:");
-                Debug.Log($"Array 1 Value: {value1}, Array 2 Value: {value2}");
-                Debug.Log($"Difference (XOR): {difference} (in binary: {System.Convert.ToString(difference, 2).PadLeft(32, '0')})");
-            }
-            else
-            {
-                // Log when values are the same
-                Debug.Log($"Index {i} is the same in both arrays: Value = {value1}");
-            }
-        }
+        pointToVertex *= uniformScale;
+        float attenuatedForce = force / (1f + pointToVertex.sqrMagnitude);
+        float velocity = attenuatedForce * Time.deltaTime;
+        vertexVelocities[i] += pointToVertex.normalized * velocity;
     }
     unsafe void CreateAsset(NativeArray<InputSplatRuntimeData> splatPosData)
     {
-
-
         var m_FormatPos = GaussianSplatAsset.VectorFormat.Norm11;
         float3 boundsMin, boundsMax;
         var boundsJob = new CalcBoundsJob
@@ -136,28 +173,14 @@ public class SplatAccessor : MonoBehaviour
         ReorderMorton(splatPosData, boundsMin, boundsMax);
         LinearizeData(splatPosData);
         var chunks = CreateChunkData(splatPosData, _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
+        NativeArray<uint> data = CreatePosDataUint(splatPosData, m_FormatPos);
+        NativeArray<uint> otherData = CreateOtherDataUint(splatPosData);
 
-        int dataLen = splatPosData.Length * GaussianSplatAsset.GetVectorSize(m_FormatPos);
-        dataLen = NextMultipleOf(dataLen, 8);
-        NativeArray<byte> data = new(dataLen, Allocator.TempJob);
 
-        CreatePositionsDataJob job = new CreatePositionsDataJob
-        {
-            m_Input = splatPosData,
-            m_Format = m_FormatPos,
-            m_FormatSize = GaussianSplatAsset.GetVectorSize(m_FormatPos),
-            m_Output = data
-        };
-        job.Schedule(splatPosData.Length, 8192).Complete();
-
-        NativeArray<byte> otherData = CreateOtherData(splatPosData);
-
-        var convertedPos = ReinterpretByteArrayAsUint(data);
-        var convertedOther = ReinterpretByteArrayAsUint(otherData);
         Debug.Log($"was created? {_splatRenderer.asset.GetRawChunkDataCreated()}");
 
-        _splatRenderer.asset.rawPosData = convertedPos;
-        _splatRenderer.asset.rawOtherData = convertedOther;
+        _splatRenderer.asset.rawPosData = data;
+        _splatRenderer.asset.rawOtherData = otherData;
         _splatRenderer.asset.rawChunkData = _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>();
         _splatRenderer.asset.SetRawChunkDataCreated(true);
         _splatRenderer.asset.rawChunkData = chunks;
@@ -165,63 +188,180 @@ public class SplatAccessor : MonoBehaviour
         Debug.Log($"chunk data size {_splatRenderer.asset.rawChunkData.Length}");
 
         //chunks.Dispose();
-        data.Dispose();
+        // data.Dispose();
 
 
     }
 
-    NativeArray<byte> CreateOtherData(NativeArray<InputSplatRuntimeData> inputSplats)
+
+
+    NativeArray<uint> CreateOtherDataUint(NativeArray<InputSplatRuntimeData> inputSplats)
     {
-        var m_FormatScale = GaussianSplatAsset.VectorFormat.Norm11;
-        int formatSize = GaussianSplatAsset.GetOtherSizeNoSHIndex(m_FormatScale); // 4 + 4
-        int dataLen = inputSplats.Length * formatSize;
+        const int uintsPerSplat = 2; // 1 uint for rotation (Norm10) + 1 for scale (Norm11)
 
-        dataLen = NextMultipleOf(dataLen, 8); // serialized as ulong
-        NativeArray<byte> data = new(dataLen, Allocator.TempJob);
+        NativeArray<uint> data = new(inputSplats.Length * uintsPerSplat, Allocator.TempJob);
 
-
-        CreateOtherDataJob job = new CreateOtherDataJob
+        CreateOtherDataUintJob job = new CreateOtherDataUintJob
         {
             m_Input = inputSplats,
-            m_ScaleFormat = m_FormatScale,
-            m_FormatSize = formatSize,
             m_Output = data
         };
+
+        job.Schedule(inputSplats.Length, 64).Complete();
+        return data;
+    }
+
+    NativeArray<uint> CreatePosDataUint(NativeArray<InputSplatRuntimeData> inputSplats, GaussianSplatAsset.VectorFormat m_FormatPos)
+    {
+        int dataLen = inputSplats.Length * GaussianSplatAsset.GetVectorSize(m_FormatPos);
+        dataLen = NextMultipleOf(dataLen, 8);
+        NativeArray<uint> data = new(dataLen / 4, Allocator.Persistent);
+
+        CreatePositionsUintDataJob job = new CreatePositionsUintDataJob
+        {
+            m_Input = inputSplats,
+            m_Format = m_FormatPos,
+            m_FormatSize = GaussianSplatAsset.GetVectorSize(m_FormatPos),
+            m_Output = data
+        };
+
         job.Schedule(inputSplats.Length, 8192).Complete();
 
         return data;
     }
 
 
-    struct CreateOtherDataJob : IJobParallelFor
+    NativeArray<float3> CreateXYZData(NativeArray<float3> alphas, NativeArray<float3> vertices, int numTriangles, int numPtsEachTriangle)
     {
-        [ReadOnly] public NativeArray<InputSplatRuntimeData> m_Input;
-        public GaussianSplatAsset.VectorFormat m_ScaleFormat;
-        public int m_FormatSize;
-        [NativeDisableParallelForRestriction] public NativeArray<byte> m_Output;
-        const int ROTATION_SIZE = 4;
-        const int SCALE_SIZE = 4;
-        const int SH_INDEX_OFFSET = 8; // 4 + 4
+
+        NativeArray<float3> data = new(numTriangles * numPtsEachTriangle, Allocator.Persistent);
+
+
+        CreateXYZDataJob job = new CreateXYZDataJob
+        {
+            m_Alphas = alphas,
+            m_Vertices = vertices,
+            m_Output = data,
+            m_numberPtsPerTriangle = numPtsEachTriangle
+        };
+        job.Schedule(numTriangles * numPtsEachTriangle, 8192).Complete();
+
+        return data;
+    }
+
+
+    public static (NativeArray<quaternion> rotations, NativeArray<float3> scalings) CreateScaleRotationData(NativeArray<float3> vertices, NativeArray<float> scales, int numPtsEachTriangle)
+    {
+
+        int numTriangles = vertices.Length / 3;
+        int totalPoints = numTriangles * numPtsEachTriangle;
+
+        NativeArray<quaternion> rotations = new NativeArray<quaternion>(totalPoints, Allocator.TempJob);
+        NativeArray<float3> scalings = new NativeArray<float3>(totalPoints, Allocator.TempJob);
+
+
+        CreateRotationsAndScalesJob job = new CreateRotationsAndScalesJob
+        {
+            m_Vertices = vertices,
+            m_Scales = scales,
+            m_numPtsEachTriangle = numPtsEachTriangle,
+            Rotations = rotations,
+            Scalings = scalings
+        };
+        job.Schedule(totalPoints, 9192).Complete();
+
+        return (rotations, scalings);
+    }
+
+
+
+
+    [BurstCompile]
+    struct CreateXYZDataJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<float3> m_Alphas;
+        [ReadOnly] public NativeArray<float3> m_Vertices;
+        public int m_numberPtsPerTriangle;
+        [NativeDisableParallelForRestriction] public NativeArray<float3> m_Output;
+
 
         public unsafe void Execute(int index)
         {
-            byte* outputPtr = (byte*)m_Output.GetUnsafePtr() + index * m_FormatSize;
+            int triangleIndex = index / m_numberPtsPerTriangle;
+            int pointIndex = index % m_numberPtsPerTriangle;
 
-            // rotation: 4 bytes
-            {
-                Quaternion rotQ = m_Input[index].rot;
-                float4 rot = new float4(rotQ.x, rotQ.y, rotQ.z, rotQ.w);
-                uint enc = EncodeQuatToNorm10(rot);
-                *(uint*)outputPtr = enc;
-                outputPtr += 4;
-            }
+            int v0Idx = triangleIndex * 3;
+            float3 v0 = m_Vertices[v0Idx];
+            float3 v1 = m_Vertices[v0Idx + 1];
+            float3 v2 = m_Vertices[v0Idx + 2];
 
-            // scale: 6, 4 or 2 bytes
-            EmitEncodedVector(m_Input[index].scale, outputPtr, m_ScaleFormat, index);
-            outputPtr += GaussianSplatAsset.GetVectorSize(m_ScaleFormat);
-
+            int alphaIndex = triangleIndex * m_numberPtsPerTriangle + pointIndex;
+            float3 alpha = m_Alphas[alphaIndex];
+            float3 point = alpha.x * v0 + alpha.y * v1 + alpha.z * v2;
+            m_Output[index] = point;
         }
     }
+
+    [BurstCompile]
+    public struct CreateRotationsAndScalesJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<float3> m_Vertices;
+        [ReadOnly] public NativeArray<float> m_Scales;
+        public int m_numPtsEachTriangle;
+
+        [WriteOnly] public NativeArray<quaternion> Rotations;
+        [WriteOnly] public NativeArray<float3> Scalings;
+
+        public void Execute(int index)
+        {
+
+            int triangleIndex = index / m_numPtsEachTriangle;
+            int pointIndex = index % m_numPtsEachTriangle;
+
+            int v0Idx = triangleIndex * 3;
+            float3 v0 = m_Vertices[v0Idx];
+            float3 v1 = m_Vertices[v0Idx + 1];
+            float3 v2 = m_Vertices[v0Idx + 2];
+
+            float3 normal = math.normalize(math.cross(v1 - v0, v2 - v0));
+            float3 centroid = (v0 + v1 + v2) / 3.0f;
+            float3 basis1 = math.normalize(v1 - centroid);
+
+            float3 v2Init = v2 - centroid;
+            float3 basis2 = math.normalize(
+                v2Init - math.dot(v2Init, normal) * normal - math.dot(v2Init, basis1) * basis1
+            );
+
+            float s1 = math.length(v1 - centroid) / 2.0f;
+            float s2 = math.dot(v2Init, basis2) / 2.0f;
+            float s0 = 1e-8f;
+
+            float scaleFactor = m_Scales[index];
+            float x = math.log(math.max(0, scaleFactor * s0) + s0);
+            float y = math.log(math.max(0, scaleFactor * s1) + s0);
+            float z = math.log(math.max(0, scaleFactor * s2) + s0);
+
+            float3 scaleVec = new float3(x, y, z);
+
+            // Emulate Unity's Matrix4x4.SetColumn + .rotation behavior
+            float4 col0 = new float4(normal, 0f);  // x-axis
+            float4 col1 = new float4(basis1, 0f);  // y-axis
+            float4 col2 = new float4(basis2, 0f);  // z-axis
+
+            float3x3 rotMatrix = new float3x3(
+                new float3(col0.x, col0.y, col0.z),
+                new float3(col1.x, col1.y, col1.z),
+                new float3(col2.x, col2.y, col2.z)
+            );
+
+            quaternion q = quaternion.LookRotationSafe(rotMatrix.c2, rotMatrix.c1); // basis2 (z), basis1 (y)
+            quaternion reordered = new quaternion(q.value.w, q.value.x, q.value.y, q.value.z); // match Unity style
+
+            Rotations[index] = reordered;
+            Scalings[index] = scaleVec;
+        }
+    }
+
 
     static void LinearizeData(NativeArray<InputSplatRuntimeData> splatData)
     {
@@ -250,29 +390,6 @@ public class SplatAccessor : MonoBehaviour
         }
     }
 
-
-
-    public static NativeArray<uint> ReinterpretByteArrayAsUint(NativeArray<byte> byteData)
-    {
-        int dataLength = byteData.Length;
-        int count = dataLength / 4;
-        NativeArray<uint> result = new NativeArray<uint>(count, Allocator.Persistent);
-
-        byte[] buffer = new byte[4];
-
-        for (int i = 0; i < count; i++)
-        {
-            int baseIndex = i * 4;
-            buffer[0] = byteData[baseIndex];
-            buffer[1] = byteData[baseIndex + 1];
-            buffer[2] = byteData[baseIndex + 2];
-            buffer[3] = byteData[baseIndex + 3];
-
-            result[i] = BitConverter.ToUInt32(buffer, 0);
-        }
-
-        return result;
-    }
 
     static void ReorderMorton(NativeArray<InputSplatRuntimeData> splatData, float3 boundsMin, float3 boundsMax)
     {
@@ -351,28 +468,12 @@ public class SplatAccessor : MonoBehaviour
         return (uint)(v.x * 1023.5f) | ((uint)(v.y * 1023.5f) << 10) | ((uint)(v.z * 1023.5f) << 20) | ((uint)(v.w * 3.5f) << 30);
     }
 
-
-    struct CreatePositionsDataJob : IJobParallelFor
-    {
-        [ReadOnly] public NativeArray<InputSplatRuntimeData> m_Input;
-        public GaussianSplatAsset.VectorFormat m_Format;
-        public int m_FormatSize;
-        [NativeDisableParallelForRestriction] public NativeArray<byte> m_Output;
-
-        public unsafe void Execute(int index)
-        {
-            byte* outputPtr = (byte*)m_Output.GetUnsafePtr() + index * m_FormatSize;
-
-            EmitEncodedVector(m_Input[index].pos, outputPtr, m_Format, index);
-
-        }
-    }
-
+    [BurstCompile]
     struct CreateAssetDataJob : IJobParallelFor
     {
-        [ReadOnly] public NativeArray<Quaternion> m_InputRot;
-        [ReadOnly] public NativeArray<Vector3> m_InputScale;
-        [ReadOnly] public NativeArray<Vector3> m_InputPos;
+        [ReadOnly] public NativeArray<quaternion> m_InputRot;
+        [ReadOnly] public NativeArray<float3> m_InputScale;
+        [ReadOnly] public NativeArray<float3> m_InputPos;
 
         [NativeDisableParallelForRestriction] public NativeArray<InputSplatRuntimeData> m_Output;
 
@@ -404,15 +505,49 @@ public class SplatAccessor : MonoBehaviour
         return job.chunks;
     }
 
-    public static NativeArray<float3> ConvertToFloat3Array(NativeArray<Vector3> input, Allocator allocator)
+    [BurstCompile]
+    struct CreatePositionsUintDataJob : IJobParallelFor
     {
-        var output = new NativeArray<float3>(input.Length, allocator);
-        for (int i = 0; i < input.Length; i++)
+        [ReadOnly] public NativeArray<InputSplatRuntimeData> m_Input;
+        public GaussianSplatAsset.VectorFormat m_Format;
+        public int m_FormatSize; // should be 4
+        [NativeDisableParallelForRestriction] public NativeArray<uint> m_Output;
+
+        public void Execute(int index)
         {
-            output[i] = input[i];
+            float3 pos = m_Input[index].pos;
+
+            // Encode using your custom 11-10-11 format
+            uint encoded = EncodeFloat3ToNorm11(math.saturate(pos));
+
+            m_Output[index] = encoded;
         }
-        return output;
+
+
     }
+
+    [BurstCompile]
+    struct CreateOtherDataUintJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<InputSplatRuntimeData> m_Input;
+        [NativeDisableParallelForRestriction] public NativeArray<uint> m_Output;
+
+        public void Execute(int index)
+        {
+            var input = m_Input[index];
+
+            // Rotation as float4 → Norm10.10.10.2 (1 uint)
+            Quaternion rotQ = input.rot;
+            float4 rot = new float4(rotQ.x, rotQ.y, rotQ.z, rotQ.w);
+            uint rotEncoded = EncodeQuatToNorm10(rot);
+            m_Output[index * 2] = rotEncoded;
+
+            // Scale as float3 → Norm11.10.11 (1 uint)
+            uint scaleEncoded = EncodeFloat3ToNorm11(math.saturate(input.scale));
+            m_Output[index * 2 + 1] = scaleEncoded;
+        }
+    }
+
 
     [BurstCompile]
     struct CalcChunkDataJob : IJobParallelFor
@@ -495,93 +630,169 @@ public class SplatAccessor : MonoBehaviour
         public Vector3 scale;
         public Quaternion rot;
     }
-    static unsafe void EmitEncodedVector(float3 v, byte* outputPtr, GaussianSplatAsset.VectorFormat format, int index)
-    {
-        switch (format)
-        {
-            case GaussianSplatAsset.VectorFormat.Float32:
-                {
-                    *(float*)outputPtr = v.x;
-                    *(float*)(outputPtr + 4) = v.y;
-                    *(float*)(outputPtr + 8) = v.z;
-                }
-                break;
-            case GaussianSplatAsset.VectorFormat.Norm11:
-                {
-                    uint enc = EncodeFloat3ToNorm11(math.saturate(v));
-                    *(uint*)outputPtr = enc;
-                }
-                break;
-
-        }
-    }
 
     static uint EncodeFloat3ToNorm11(float3 v) // 32 bits: 11.10.11
     {
         return (uint)(v.x * 2047.5f) | ((uint)(v.y * 1023.5f) << 11) | ((uint)(v.z * 2047.5f) << 21);
     }
-    public NativeArray<uint> ConvertPositions(NativeArray<float3> positions)
+
+
+
+    public static NativeArray<float3> DecodeAlphasToNativeFloat3(byte[] fileBytes, int numFaces, int numPointsPerTriangle, Allocator allocator)
     {
+        int floatsPerPoint = 3; // each float3 = 3 floats
+        int bytesPerPoint = floatsPerPoint * 4; // 3 floats * 4 bytes = 12 bytes
+        int totalPoints = numFaces * numPointsPerTriangle;
+        int expectedBytes = totalPoints * bytesPerPoint;
 
-        NativeArray<uint> encodedPositions = new NativeArray<uint>(positions.Length, Allocator.TempJob);
-
-        for (int i = 0; i < positions.Length; i++)
+        if (fileBytes.Length < expectedBytes)
         {
-            encodedPositions[i] = EncodeFloat3ToNorm11(math.saturate(positions[i]));
+            Debug.LogError($"Insufficient data: expected {expectedBytes} bytes, but got {fileBytes.Length} bytes.");
+            return default;
         }
 
-        for (int i = 0; i < 10 && i < encodedPositions.Length; i++)
+        NativeArray<float3> alphas = new NativeArray<float3>(totalPoints, allocator);
+
+        for (int i = 0; i < totalPoints; i++)
         {
-            Debug.Log($"Encoded Position {i}: {encodedPositions[i]}");
-            Debug.Log($"Original Position {i}: {positions[i]}, Saturated: {math.saturate(positions[i])}");
+            int offset = i * bytesPerPoint;
+
+            float x = BitConverter.ToSingle(fileBytes, offset);
+            float y = BitConverter.ToSingle(fileBytes, offset + 4);
+            float z = BitConverter.ToSingle(fileBytes, offset + 8);
+
+            alphas[i] = new float3(x, y, z);
+
         }
 
-        return encodedPositions;
+        return alphas;
     }
-    List<List<List<float>>> DecodeAlphas(byte[] fileBytes, int numFaces)
+
+    NativeArray<float> DecodeScalesToNative(byte[] fileBytes, int numberOfSplats, Allocator allocator)
     {
         int vectorSize = GaussianSplatAsset.GetVectorSize(_splatRenderer.asset.posFormat);
-        int numPoints = numFaces * 5;  // Assuming 5 points per triangle
+        int requiredLength = numberOfSplats * vectorSize;
 
-        // Ensure we have enough data in fileBytes to decode the alphas
-        if (fileBytes.Length < numPoints * vectorSize)
+        if (fileBytes.Length < requiredLength)
         {
-            Debug.LogError($"Insufficient data: expected {numPoints * vectorSize} bytes, but got {fileBytes.Length} bytes.");
-
+            Debug.LogError($"Insufficient data: expected {requiredLength} bytes, but got {fileBytes.Length} bytes.");
+            return default;
         }
 
-        byte[] buffer = new byte[vectorSize];
-        List<List<List<float>>> decodedAlphas = new List<List<List<float>>>();
+        NativeArray<float> decodedScales = new NativeArray<float>(numberOfSplats, allocator, NativeArrayOptions.UninitializedMemory);
 
-        for (int i = 0; i < numFaces; i++)
+        for (int i = 0; i < numberOfSplats; i++)
         {
-            List<List<float>> faceAlphas = new List<List<float>>();
-            for (int j = 0; j < 5; j++) // 5 points per triangle
-            {
-                int offset = (i * 5 + j) * vectorSize;
-                if (offset + vectorSize > fileBytes.Length)
-                {
-                    Debug.LogError($"Offset and length are out of bounds for the array. Offset: {offset}, VectorSize: {vectorSize}, FileLength: {fileBytes.Length}");
-                    break;
-                }
-
-                // Copy the relevant bytes into the buffer
-                System.Buffer.BlockCopy(fileBytes, offset, buffer, 0, vectorSize);
-
-                // Decode the packed uint to float3
-                uint packed = System.BitConverter.ToUInt32(buffer, 0);
-                float3 pos = DecodeNorm11ToFloat3(packed);
-
-                // Add the decoded float3 to the List
-                faceAlphas.Add(new List<float> { pos.x, pos.y, pos.z });
-            }
-            decodedAlphas.Add(faceAlphas);
+            int offset = i * vectorSize;
+            float scale = BitConverter.ToSingle(fileBytes, offset);
+            decodedScales[i] = scale;
         }
 
-        return decodedAlphas;
+        return decodedScales;
     }
 
-    List<List<List<float>>> DecodeAlphasv2(byte[] fileBytes, int numFaces)
+    static int NextMultipleOf(int size, int multipleOf)
+    {
+        return (size + multipleOf - 1) / multipleOf * multipleOf;
+    }
+
+
+
+
+    /*
+
+     public static NativeArray<uint> ReinterpretByteArrayAsUint(NativeArray<byte> byteData)
+    {
+        int dataLength = byteData.Length;
+        int count = dataLength / 4;
+        NativeArray<uint> result = new NativeArray<uint>(count, Allocator.Persistent);
+
+        byte[] buffer = new byte[4];
+
+        for (int i = 0; i < count; i++)
+        {
+            int baseIndex = i * 4;
+            buffer[0] = byteData[baseIndex];
+            buffer[1] = byteData[baseIndex + 1];
+            buffer[2] = byteData[baseIndex + 2];
+            buffer[3] = byteData[baseIndex + 3];
+
+            result[i] = BitConverter.ToUInt32(buffer, 0);
+        }
+
+        return result;
+    }
+
+        NativeArray<byte> CreateOtherData(NativeArray<InputSplatRuntimeData> inputSplats)
+    {
+        var m_FormatScale = GaussianSplatAsset.VectorFormat.Norm11;
+        int formatSize = GaussianSplatAsset.GetOtherSizeNoSHIndex(m_FormatScale); // 4 + 4
+        int dataLen = inputSplats.Length * formatSize;
+
+        dataLen = NextMultipleOf(dataLen, 8); // serialized as ulong
+        NativeArray<byte> data = new(dataLen, Allocator.TempJob);
+
+
+        CreateOtherDataJob job = new CreateOtherDataJob
+        {
+            m_Input = inputSplats,
+            m_ScaleFormat = m_FormatScale,
+            m_FormatSize = formatSize,
+            m_Output = data
+        };
+        job.Schedule(inputSplats.Length, 8192).Complete();
+
+        return data;
+    }
+
+       struct CreateOtherDataJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<InputSplatRuntimeData> m_Input;
+        public GaussianSplatAsset.VectorFormat m_ScaleFormat;
+        public int m_FormatSize;
+        [NativeDisableParallelForRestriction] public NativeArray<byte> m_Output;
+        const int ROTATION_SIZE = 4;
+        const int SCALE_SIZE = 4;
+        const int SH_INDEX_OFFSET = 8; // 4 + 4
+
+        public unsafe void Execute(int index)
+        {
+            byte* outputPtr = (byte*)m_Output.GetUnsafePtr() + index * m_FormatSize;
+
+            // rotation: 4 bytes
+            {
+                Quaternion rotQ = m_Input[index].rot;
+                float4 rot = new float4(rotQ.x, rotQ.y, rotQ.z, rotQ.w);
+                uint enc = EncodeQuatToNorm10(rot);
+                *(uint*)outputPtr = enc;
+                outputPtr += 4;
+            }
+
+            // scale: 6, 4 or 2 bytes
+            EmitEncodedVector(m_Input[index].scale, outputPtr, m_ScaleFormat, index);
+            outputPtr += GaussianSplatAsset.GetVectorSize(m_ScaleFormat);
+
+        }
+    }
+
+
+    struct CreatePositionsDataJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<InputSplatRuntimeData> m_Input;
+        public GaussianSplatAsset.VectorFormat m_Format;
+        public int m_FormatSize;
+        [NativeDisableParallelForRestriction] public NativeArray<byte> m_Output;
+
+        public unsafe void Execute(int index)
+        {
+            byte* outputPtr = (byte*)m_Output.GetUnsafePtr() + index * m_FormatSize;
+
+            EmitEncodedVector(m_Input[index].pos, outputPtr, m_Format, index);
+
+        }
+    }
+
+      List<List<List<float>>> DecodeAlphasv2(byte[] fileBytes, int numFaces)
     {
         int vectorSize = 12;
         int numPoints = numFaces * 5;  // Assuming 5 points per triangle
@@ -614,7 +825,9 @@ public class SplatAccessor : MonoBehaviour
 
                 faceAlphas.Add(new List<float> { x, y, z });
 
-                // Add the decoded float3 to the List
+                if (i * 5 + j < 10)
+                    Debug.Log($"DecodeAlphasv2 [{i * 5 + j}] = ({x}, {y}, {z})");
+
 
             }
             decodedAlphas.Add(faceAlphas);
@@ -623,7 +836,7 @@ public class SplatAccessor : MonoBehaviour
         return decodedAlphas;
     }
 
-    List<float> DecodeScales(byte[] fileBytes, int numberOfSplats)
+        List<float> DecodeScales(byte[] fileBytes, int numberOfSplats)
     {
         int vectorSize = GaussianSplatAsset.GetVectorSize(_splatRenderer.asset.posFormat);
 
@@ -648,66 +861,29 @@ public class SplatAccessor : MonoBehaviour
 
         return decodedScales;
     }
-
-    void AccessFirstFaceVertices()
-    {
-        if (_mesh == null || _mesh.vertexCount == 0)
-        {
-            Debug.LogWarning("No mesh data available");
-            return;
-        }
-
-        // Get all vertices and triangles
-        Vector3[] vertices = _mesh.vertices;
-        int[] triangles = _mesh.triangles;
-
-        if (triangles.Length >= 6) // At least one complete triangle
-        {
-            // Get the first triangle's vertices
-            Vector3 v1 = vertices[triangles[0]];
-            Vector3 v2 = vertices[triangles[1]];
-            Vector3 v3 = vertices[triangles[2]];
-
-            Debug.Log($"First face vertices:\n{v1}\n{v2}\n{v3}");
-
-            Vector3 v4 = vertices[triangles[3]];
-            Vector3 v5 = vertices[triangles[4]];
-            Vector3 v6 = vertices[triangles[5]];
-
-            Debug.Log($"Second face vertices:\n{v4}\n{v5}\n{v6}");
-        }
-        else
-        {
-            Debug.LogWarning("Mesh doesn't contain complete triangles");
-        }
-    }
-
-    static int NextMultipleOf(int size, int multipleOf)
-    {
-        return (size + multipleOf - 1) / multipleOf * multipleOf;
-    }
-
-    static float3 DecodeVectorSafe(byte[] data, GaussianSplatAsset.VectorFormat format)
+    
+        static unsafe void EmitEncodedVector(float3 v, byte* outputPtr, GaussianSplatAsset.VectorFormat format, int index)
     {
         switch (format)
         {
             case GaussianSplatAsset.VectorFormat.Float32:
-                return new float3(
-                    System.BitConverter.ToSingle(data, 0),
-                    System.BitConverter.ToSingle(data, 4),
-                    System.BitConverter.ToSingle(data, 8));
-
+                {
+                    *(float*)outputPtr = v.x;
+                    *(float*)(outputPtr + 4) = v.y;
+                    *(float*)(outputPtr + 8) = v.z;
+                }
+                break;
             case GaussianSplatAsset.VectorFormat.Norm11:
-                uint packed = System.BitConverter.ToUInt32(data, 0);
-                return DecodeNorm11ToFloat3(packed);
+                {
+                    uint enc = EncodeFloat3ToNorm11(math.saturate(v));
+                    *(uint*)outputPtr = enc;
+                }
+                break;
 
-            // Add other format cases as needed
-            default:
-                throw new NotImplementedException();
         }
     }
 
-    static float3 DecodeNorm11ToFloat3(uint encoded)
+        static float3 DecodeNorm11ToFloat3(uint encoded)
     {
         // Bit layout: 11 bits X, 10 bits Y, 11 bits Z (total 32 bits)
 
@@ -724,48 +900,8 @@ public class SplatAccessor : MonoBehaviour
         return new float3(x, y, z);
     }
 
-
-    // Update is called once per frame
-    void Update()
-    {
-        var faceVertices = ProcessModifiedMesh(gameObject);
-        _splatRenderer = GameObject.FindGameObjectWithTag("SplatRenderer").GetComponent<GaussianSplatRenderer>();
-        if (_splatRenderer.asset.alphaData != null)
-        {
-            // Get the raw bytes from the TextAsset
-            byte[] fileBytes = _splatRenderer.asset.alphaData.bytes;
-            byte[] fileScaleBytes = _splatRenderer.asset.scaleData.bytes;
-            var decodedAlphas = DecodeAlphasv2(fileBytes, faceVertices.Count / 3);
-            var decodedScales = DecodeScales(fileScaleBytes, _splatRenderer.asset.splatCount);
+    */
 
 
-            var xyzValues = SplatMathUtils.ToNativeArray(SplatMathUtils.CalculateXYZ(faceVertices, 5, decodedAlphas));
-            var (rotations, scalings) = SplatMathUtils.GenerateRotationsAndScalesNative(faceVertices, decodedScales, 5, Allocator.TempJob);
 
-            NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.TempJob);
-
-            var job = new CreateAssetDataJob()
-            {
-                m_InputPos = xyzValues,
-                m_InputRot = rotations,
-                m_InputScale = scalings,
-                m_Output = inputSplatsData
-            };
-            job.Schedule(xyzValues.Length, 8192).Complete();
-
-
-            CreateAsset(inputSplatsData);
-
-
-            rotations.Dispose();
-            scalings.Dispose();
-            inputSplatsData.Dispose();
-            xyzValues.Dispose();
-
-        }
-        else
-        {
-            Debug.LogError("posData is missing in GaussianSplatAsset!");
-        }
-    }
 }
