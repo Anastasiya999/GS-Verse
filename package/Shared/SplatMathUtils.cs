@@ -148,7 +148,7 @@ namespace GaussianSplatting.Shared
         }
 
 
-        public static NativeArray<float3> GetMeshFaceVerticesNative(GameObject gameObject, Vector3[] vertices, Allocator allocator)
+        public static NativeArray<float3> GetMeshFaceVerticesNative(GameObject gameObject, Vector3[] Vertices, int[] triangles, Allocator allocator)
         {
             MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
             if (meshFilter == null)
@@ -164,8 +164,8 @@ namespace GaussianSplatting.Shared
                 return default;
             }
 
-            // Vector3[] vertices = TransformVertices(Vertices);
-            int[] triangles = mesh.triangles;
+            Vector3[] vertices = TransformVertices(Vertices);
+            //int[] triangles = mesh.triangles;
             int totalFaces = triangles.Length / 3;
 
             NativeArray<float3> faceVertices = new NativeArray<float3>(totalFaces * 3, allocator);

@@ -25,6 +25,8 @@ namespace GaussianSplatting.Runtime
         public static GaussianSplatRenderSystem instance => ms_Instance ??= new GaussianSplatRenderSystem();
         static GaussianSplatRenderSystem ms_Instance;
 
+        static bool m_isSorting;
+
         readonly Dictionary<GaussianSplatRenderer, MaterialPropertyBlock> m_Splats = new();
         readonly HashSet<Camera> m_CameraCommandBuffersDone = new();
         readonly List<(GaussianSplatRenderer, MaterialPropertyBlock)> m_ActiveSplats = new();
@@ -118,6 +120,7 @@ namespace GaussianSplatting.Runtime
 
                 // sort
                 var matrix = gs.transform.localToWorldMatrix;
+
                 if (gs.m_FrameCounter % gs.m_SortNthFrame == 0)
                     gs.SortPoints(cmb, cam, matrix);
                 ++gs.m_FrameCounter;
@@ -284,6 +287,7 @@ namespace GaussianSplatting.Runtime
         internal Material m_MatDebugBoxes;
 
         internal int m_FrameCounter;
+        internal bool m_isSorting = false;
         GaussianSplatAsset m_PrevAsset;
         Hash128 m_PrevHash;
         bool m_Registered;
@@ -411,9 +415,7 @@ namespace GaussianSplatting.Runtime
             }
             if (asset.GetRawChunkDataCreated())
             {
-                Debug.Log($"chunk created new {asset.rawChunkData.Length}");
                 m_GpuChunks.SetData(asset.rawChunkData);
-
             }
 
 
@@ -494,6 +496,7 @@ namespace GaussianSplatting.Runtime
 
             EnsureMaterials();
             EnsureSorterAndRegister();
+
 
             CreateResourcesForAsset();
         }
@@ -655,6 +658,7 @@ namespace GaussianSplatting.Runtime
         public void Update()
         {
             var curHash = m_Asset ? m_Asset.dataHash : new Hash128();
+            var output = m_Asset ? "m_asset" : "new hash";
             if (m_PrevAsset != m_Asset || m_PrevHash != curHash)
             {
                 m_PrevAsset = m_Asset;

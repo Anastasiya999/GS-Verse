@@ -323,7 +323,7 @@ namespace GaussianSplatting.Runtime
 
                 m_rawPosData = value;
                 m_rawPosDataIsOwned = true; // Because setter is used, we assume you own it
-                SetDataHash(ComputeHashFromNativeArray(value));
+                                            //  SetDataHash(ComputeHashFromNativeArray(value));
 
             }
         }
@@ -351,11 +351,11 @@ namespace GaussianSplatting.Runtime
             {
                 // Only dispose if it's valid and not coming from GetData (you can track if needed)
                 if (m_rawOtherData.IsCreated && m_rawOtherDataIsOwned)
-                    m_rawPosData.Dispose();
+                    m_rawOtherData.Dispose();
 
                 m_rawOtherData = value;
                 m_rawOtherDataIsOwned = true; // Because setter is used, we assume you own it
-                SetDataHash(ComputeHashFromNativeArray(value));
+                                              //  SetDataHash(ComputeHashFromNativeArray(value));
 
             }
         }
@@ -371,6 +371,7 @@ namespace GaussianSplatting.Runtime
 
         private NativeArray<ChunkInfo> _rawChunkData;
         private bool isRawChunkDataIsCreated = false;
+        private bool isSorting = false;
 
         public NativeArray<ChunkInfo> rawChunkData
         {
@@ -390,10 +391,22 @@ namespace GaussianSplatting.Runtime
             isRawChunkDataIsCreated = value;
         }
 
+
+        public void SetIsSorting(bool value)
+        {
+            isSorting = value;
+        }
+
         public bool GetRawChunkDataCreated()
         {
             return isRawChunkDataIsCreated;
         }
+
+        public bool GetIsSorting()
+        {
+            return isSorting;
+        }
+
 
 
         private void OnDestroy()

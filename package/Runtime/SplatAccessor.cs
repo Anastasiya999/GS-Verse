@@ -17,20 +17,37 @@ public class SplatAccessor : MonoBehaviour
     private GaussianSplatRenderer _splatRenderer;
     private MeshFilter _meshFilter;
     private Mesh _mesh;
+    private bool needsAssetUpdate = false;
 
     Mesh deformingMesh;
     public float springForce = 20f;
     float uniformScale = 1f;
     public float damping = 5f;
 
+    int[] triangles;
+
+    public bool isClicked = false;
+    private bool isCreatingAsset = false;
+
+    float frameCount = 0f;
+
     Vector3[] originalVertices, displacedVertices;
-    Vector3[] transformedOriginalVertices, transformedDisplacedVertices;
+    Vector3[] transformedOriginalVertices, transformedDisplacedVertices, verticesGS;
     Vector3[] vertexVelocities;
+    Vector3[] vertexVelocitiesGS;
     List<List<List<float>>> decodedAlphas;
 
     NativeArray<float3> decodedAlphasNative;
     List<float> decodedScales;
     NativeArray<float> decodedScalesNative;
+
+    private JobHandle createAssetJobHandle;
+    private NativeArray<InputSplatRuntimeData> inputSplatsData;
+    private NativeArray<float3> xyzValues;
+    private NativeArray<quaternion> rotations;
+    private NativeArray<float3> scalings;
+    private NativeArray<float3> faceVertices;
+    private bool isJobScheduled = false;
 
     void Start()
     {
@@ -48,12 +65,16 @@ public class SplatAccessor : MonoBehaviour
         {
             Debug.LogError("posData is missing in GaussianSplatAsset!");
         }
-        //GetComponent<MeshRenderer>().enabled = false; // Hide the mesh
+        GetComponent<MeshRenderer>().enabled = false; // Hide the mesh
         uniformScale = transform.localScale.x;
         deformingMesh = GetComponent<MeshFilter>().mesh;
         originalVertices = deformingMesh.vertices;
 
-        transformedOriginalVertices = SplatMathUtils.TransformVertices(deformingMesh.vertices);
+        // transformedOriginalVertices = SplatMathUtils.TransformVertices(deformingMesh.vertices);
+        transformedOriginalVertices = deformingMesh.vertices;
+        verticesGS = deformingMesh.vertices;
+        triangles = deformingMesh.triangles;
+
         displacedVertices = new Vector3[originalVertices.Length];
         transformedDisplacedVertices = new Vector3[originalVertices.Length];
         for (int i = 0; i < originalVertices.Length; i++)
@@ -62,28 +83,63 @@ public class SplatAccessor : MonoBehaviour
             transformedDisplacedVertices[i] = transformedOriginalVertices[i];
         }
         vertexVelocities = new Vector3[originalVertices.Length];
+        vertexVelocitiesGS = new Vector3[originalVertices.Length];
+        inputSplatsData = new NativeArray<InputSplatRuntimeData>(_splatRenderer.asset.splatCount, Allocator.Persistent);
+
+
 
     }
 
+    public static Vector3 TransformVertex(Vector3 v)
+    {
+        return new Vector3(
+                    v.x,
+                    -v.z,
+                    v.y
+                );
+    }
 
-
-    // Update is called once per frame
     void Update()
     {
-        for (int i = 0; i < displacedVertices.Length; i++)
+        if (isJobScheduled)
         {
-            UpdateVertex(i);
+            if (createAssetJobHandle.IsCompleted)
+            {
+                createAssetJobHandle.Complete();
+                CreateAsset(inputSplatsData);
+
+                // Dispose arrays
+                xyzValues.Dispose();
+                rotations.Dispose();
+                scalings.Dispose();
+                faceVertices.Dispose();
+
+                isJobScheduled = false;
+            }
+            return;
         }
+
+        frameCount++;
+        var dis = isClicked ? 1f : 0f;
+        bool mouseDown = Input.GetMouseButton(0);
+        if (mouseDown)
+        {
+            for (int i = 0; i < displacedVertices.Length; i++)
+            {
+                UpdateVertex(i, dis);
+            }
+        }
+        else
+        {
+            ReturnToOriginalShape();
+        }
+
         deformingMesh.vertices = displacedVertices;
-        //transformedOriginalVertices = transformedDisplacedVertices;
         deformingMesh.RecalculateNormals();
-
-        var faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, transformedDisplacedVertices, Allocator.Persistent);
-        var xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / 5, 5);
-        var (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, 5);
-
-
-        NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.Persistent);
+        // Prepare NativeArrays
+        faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, transformedDisplacedVertices, triangles, Allocator.Persistent);
+        xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / 5, 5);
+        (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, 5);
 
         var job = new CreateAssetDataJob()
         {
@@ -92,21 +148,107 @@ public class SplatAccessor : MonoBehaviour
             m_InputScale = scalings,
             m_Output = inputSplatsData
         };
-        job.Schedule(xyzValues.Length, 8192).Complete();
 
+        createAssetJobHandle = job.Schedule(xyzValues.Length, 8192);
+        isJobScheduled = true;
+    }
+    void OnDestroy()
+    {
+        if (isJobScheduled)
+        {
+            createAssetJobHandle.Complete();
+            isJobScheduled = false;
+        }
 
-        CreateAsset(inputSplatsData);
-
-
-        rotations.Dispose();
-        scalings.Dispose();
-        inputSplatsData.Dispose();
-        xyzValues.Dispose();
-        faceVertices.Dispose();
-
+        if (inputSplatsData.IsCreated)
+            inputSplatsData.Dispose();
     }
 
-    void UpdateVertex(int i)
+
+
+
+    // Update is called once per frame
+    /* void Update()
+     {
+         frameCount++;
+         var dis = isClicked ? 1f : 0f;
+         bool mouseDown = Input.GetMouseButton(0);
+         if (mouseDown)
+         {
+             for (int i = 0; i < displacedVertices.Length; i++)
+             {
+                 UpdateVertex(i, dis);
+
+             }
+
+         }
+         else
+         {
+             ReturnToOriginalShape();
+         }
+
+
+
+
+         deformingMesh.vertices = displacedVertices;
+
+         deformingMesh.RecalculateNormals();
+         // MarkAssetDirty();
+
+         if (needsAssetUpdate && !isCreatingAsset)
+         {
+             needsAssetUpdate = false;  // Reset flag
+             StartCoroutine(CreateAssetCoroutine());
+         }
+
+
+
+         var faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, displacedVertices, triangles, Allocator.Persistent);
+         var xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / 5, 5);
+         var (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, 5);
+
+
+         NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.Persistent);
+
+         var job = new CreateAssetDataJob()
+         {
+             m_InputPos = xyzValues,
+             m_InputRot = rotations,
+             m_InputScale = scalings,
+             m_Output = inputSplatsData
+         };
+         job.Schedule(xyzValues.Length, 8192).Complete();
+
+
+         CreateAsset(inputSplatsData);
+
+
+         rotations.Dispose();
+         scalings.Dispose();
+         inputSplatsData.Dispose();
+         xyzValues.Dispose();
+         faceVertices.Dispose();
+
+
+
+     }
+
+
+ */
+    public void SetClickState(bool clicked)
+    {
+        isClicked = clicked;
+    }
+
+    void ReturnToOriginalShape()
+    {
+        for (int i = 0; i < transformedDisplacedVertices.Length; i++)
+        {
+            transformedDisplacedVertices[i] = Vector3.Lerp(transformedDisplacedVertices[i], transformedOriginalVertices[i], Time.deltaTime * 5f);
+        }
+    }
+
+    void UpdateVertex(int i, float dis)
     {
 
 
@@ -117,26 +259,32 @@ public class SplatAccessor : MonoBehaviour
         velocity *= 1f - damping * Time.deltaTime;
         vertexVelocities[i] = velocity;
 
-        // TODO: with raycasting, refactor
+        Vector3 velocityGS = vertexVelocitiesGS[i];
+        Vector3 displacementGS = transformedDisplacedVertices[i] - transformedOriginalVertices[i];
+        displacementGS *= uniformScale;
+        velocityGS -= displacementGS * springForce * Time.deltaTime;
+        velocityGS *= 1f - damping * Time.deltaTime;
+        vertexVelocitiesGS[i] = velocityGS;
 
-        /*
-     
         displacedVertices[i] += velocity * (Time.deltaTime / uniformScale);
-        transformedDisplacedVertices[i] += velocity * (Time.deltaTime / uniformScale);
-        */
 
 
-        // displacedVertices[i] = originalVertices[i] + new Vector3(0, Mathf.Sin(Time.time + originalVertices[i].x), 0);
-        displacedVertices[i] = originalVertices[i] + new Vector3(originalVertices[i].x * Mathf.Sin(Time.time), 0, originalVertices[i].z * Mathf.Sin(Time.time));
-        transformedDisplacedVertices[i] = transformedOriginalVertices[i] + new Vector3(transformedOriginalVertices[i].x * Mathf.Sin(Time.time), 0, transformedOriginalVertices[i].z * Mathf.Sin(Time.time));
+        transformedDisplacedVertices[i] += velocityGS * (Time.deltaTime / uniformScale) + new Vector3(-transformedOriginalVertices[i].x * (Time.deltaTime / uniformScale) * dis, transformedOriginalVertices[i].y * (Time.deltaTime / uniformScale) * 1.5f * dis, transformedOriginalVertices[i].z * (Time.deltaTime / uniformScale) * dis);
+        //transformedDisplacedVertices[i] += velocityGS * (Time.deltaTime / uniformScale);
 
+        //transformedDisplacedVertices[i] = transformedOriginalVertices[i] + new Vector3(transformedOriginalVertices[i].x * Mathf.Sin(Time.time), 0, transformedOriginalVertices[i].z * Mathf.Sin(Time.time));
 
-        // displacedVertices[i] += Vector3.up * 0.45f;
-        // transformedDisplacedVertices[i] += new Vector3(0, 0, 1) * 0.45f;
+    }
 
+    public void AddDeformingForce(Vector3 point, Vector3 force)
+    {
 
-        Debug.DrawLine(transform.TransformPoint(originalVertices[i]),
-                  transform.TransformPoint(displacedVertices[i]), Color.red);
+        for (int i = 0; i < displacedVertices.Length; i++)
+        {
+            AddForceToVertex(i, point, force);
+        }
+
+        Debug.DrawLine(Camera.main.transform.position, point, Color.red);
     }
 
     public void AddDeformingForce(Vector3 point, float force)
@@ -152,11 +300,40 @@ public class SplatAccessor : MonoBehaviour
     {
         point = transform.InverseTransformPoint(point);
         Vector3 pointToVertex = displacedVertices[i] - point;
+        Vector3 pointToVertexGS = transformedDisplacedVertices[i] - point;
 
         pointToVertex *= uniformScale;
         float attenuatedForce = force / (1f + pointToVertex.sqrMagnitude);
         float velocity = attenuatedForce * Time.deltaTime;
         vertexVelocities[i] += pointToVertex.normalized * velocity;
+
+        pointToVertexGS *= uniformScale;
+        float attenuatedForceGS = force / (1f + pointToVertexGS.sqrMagnitude);
+        float velocityGS = attenuatedForceGS * Time.deltaTime;
+        vertexVelocitiesGS[i] += pointToVertexGS.normalized * velocityGS;
+    }
+
+    void AddForceToVertex(int i, Vector3 point, Vector3 force)
+    {
+
+        Vector3 pointLocal = transform.InverseTransformPoint(point);
+        Vector3 pointCamera = new Vector3(2.0f, 3.3f, 0.0f);
+
+        Vector3 pointToVertex = displacedVertices[i] - pointLocal;
+        Vector3 pointToVertexGS = transformedDisplacedVertices[i] - pointLocal;
+
+        pointToVertexGS *= uniformScale;
+        float attenuationGS = 1f / (1f + pointToVertexGS.sqrMagnitude);
+        Vector3 appliedForceGS = force * Time.deltaTime;
+        vertexVelocitiesGS[i] += appliedForceGS;
+
+
+        pointToVertex *= uniformScale;
+        float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
+        Vector3 appliedForce = force * attenuation * Time.deltaTime;
+        vertexVelocities[i] += appliedForce;
+
+
     }
     unsafe void CreateAsset(NativeArray<InputSplatRuntimeData> splatPosData)
     {
@@ -170,28 +347,37 @@ public class SplatAccessor : MonoBehaviour
         };
         boundsJob.Schedule().Complete();
 
-        ReorderMorton(splatPosData, boundsMin, boundsMax);
+        ReorderMorton(splatPosData, boundsMin, boundsMax, _splatRenderer);
+
         LinearizeData(splatPosData);
+
         var chunks = CreateChunkData(splatPosData, _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
         NativeArray<uint> data = CreatePosDataUint(splatPosData, m_FormatPos);
         NativeArray<uint> otherData = CreateOtherDataUint(splatPosData);
 
 
-        Debug.Log($"was created? {_splatRenderer.asset.GetRawChunkDataCreated()}");
 
         _splatRenderer.asset.rawPosData = data;
         _splatRenderer.asset.rawOtherData = otherData;
-        _splatRenderer.asset.rawChunkData = _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>();
-        _splatRenderer.asset.SetRawChunkDataCreated(true);
+        if (frameCount == 1)
+        {
+            _splatRenderer.asset.rawChunkData = _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>();
+            _splatRenderer.asset.SetRawChunkDataCreated(true);
+        }
+
+
         _splatRenderer.asset.rawChunkData = chunks;
-
-        Debug.Log($"chunk data size {_splatRenderer.asset.rawChunkData.Length}");
-
-        //chunks.Dispose();
-        // data.Dispose();
-
+        _splatRenderer.asset.SetDataHash(new Hash128((uint)_splatRenderer.asset.splatCount, (uint)(_splatRenderer.asset.formatVersion + frameCount), 0, 0));
 
     }
+
+    Hash128 ComputeHashFromNativeArray(NativeArray<uint> data)
+    {
+        byte[] byteArray = new byte[data.Length * sizeof(uint)];
+        System.Buffer.BlockCopy(data.ToArray(), 0, byteArray, 0, byteArray.Length);
+        return Hash128.Compute(Convert.ToBase64String(byteArray));
+    }
+
 
 
 
@@ -199,7 +385,7 @@ public class SplatAccessor : MonoBehaviour
     {
         const int uintsPerSplat = 2; // 1 uint for rotation (Norm10) + 1 for scale (Norm11)
 
-        NativeArray<uint> data = new(inputSplats.Length * uintsPerSplat, Allocator.TempJob);
+        NativeArray<uint> data = new(inputSplats.Length * uintsPerSplat, Allocator.Persistent);
 
         CreateOtherDataUintJob job = new CreateOtherDataUintJob
         {
@@ -256,8 +442,8 @@ public class SplatAccessor : MonoBehaviour
         int numTriangles = vertices.Length / 3;
         int totalPoints = numTriangles * numPtsEachTriangle;
 
-        NativeArray<quaternion> rotations = new NativeArray<quaternion>(totalPoints, Allocator.TempJob);
-        NativeArray<float3> scalings = new NativeArray<float3>(totalPoints, Allocator.TempJob);
+        NativeArray<quaternion> rotations = new NativeArray<quaternion>(totalPoints, Allocator.Persistent);
+        NativeArray<float3> scalings = new NativeArray<float3>(totalPoints, Allocator.Persistent);
 
 
         CreateRotationsAndScalesJob job = new CreateRotationsAndScalesJob
@@ -362,6 +548,11 @@ public class SplatAccessor : MonoBehaviour
         }
     }
 
+    public void MarkAssetDirty()
+    {
+        needsAssetUpdate = true;
+    }
+
 
     static void LinearizeData(NativeArray<InputSplatRuntimeData> splatData)
     {
@@ -391,24 +582,42 @@ public class SplatAccessor : MonoBehaviour
     }
 
 
-    static void ReorderMorton(NativeArray<InputSplatRuntimeData> splatData, float3 boundsMin, float3 boundsMax)
+    static void ReorderMorton(NativeArray<InputSplatRuntimeData> splatData, float3 boundsMin, float3 boundsMax, GaussianSplatRenderer gs)
     {
+        gs.SetIsSorting(true);
         ReorderMortonJob order = new ReorderMortonJob
         {
             m_SplatData = splatData,
             m_BoundsMin = boundsMin,
             m_InvBoundsSize = 1.0f / (boundsMax - boundsMin),
-            m_Order = new NativeArray<(ulong, int)>(splatData.Length, Allocator.TempJob)
+            m_Order = new NativeArray<(ulong, int)>(splatData.Length, Allocator.Persistent)
         };
         order.Schedule(splatData.Length, 4096).Complete();
         order.m_Order.Sort(new OrderComparer());
 
-        NativeArray<InputSplatRuntimeData> copy = new(order.m_SplatData, Allocator.TempJob);
+
+
+
+        NativeArray<InputSplatRuntimeData> copy = new(order.m_SplatData, Allocator.Persistent);
         for (int i = 0; i < copy.Length; ++i)
             order.m_SplatData[i] = copy[order.m_Order[i].Item2];
         copy.Dispose();
 
         order.m_Order.Dispose();
+        gs.SetIsSorting(false);
+
+        /*
+        NativeArray<InputSplatRuntimeData> sortedData = new NativeArray<InputSplatRuntimeData>(splatData.Length, Allocator.Persistent);
+
+        for (int i = 0; i < sortedData.Length / 2; ++i)
+        {
+            sortedData[i] = splatData[order.m_Order[i].Item2];
+        }
+
+        NativeArray<InputSplatRuntimeData>.Copy(sortedData, splatData);
+
+        sortedData.Dispose();
+    */
     }
 
     [BurstCompile]
@@ -462,6 +671,37 @@ public class SplatAccessor : MonoBehaviour
         }
     }
 
+    private IEnumerator CreateAssetCoroutine()
+    {
+        isCreatingAsset = true;
+        var faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, verticesGS, triangles, Allocator.Persistent);
+        var xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / 5, 5);
+        var (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, 5);
+
+        NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.Persistent);
+
+        var job = new CreateAssetDataJob()
+        {
+            m_InputPos = xyzValues,
+            m_InputRot = rotations,
+            m_InputScale = scalings,
+            m_Output = inputSplatsData
+        };
+        job.Schedule(xyzValues.Length, 8192).Complete();
+
+        yield return null; // Let Unity breathe
+
+        CreateAsset(inputSplatsData);
+
+        rotations.Dispose();
+        scalings.Dispose();
+        inputSplatsData.Dispose();
+        xyzValues.Dispose();
+        faceVertices.Dispose();
+        isCreatingAsset = false;
+    }
+
+
 
     static uint EncodeQuatToNorm10(float4 v) // 32 bits: 10.10.10.2
     {
@@ -496,7 +736,7 @@ public class SplatAccessor : MonoBehaviour
         CalcChunkDataJob job = new CalcChunkDataJob
         {
             splatPositions = splatData,
-            chunks = new(chunkCount, Allocator.TempJob),
+            chunks = new(chunkCount, Allocator.Persistent),
             prevChunks = prevChunks
         };
 
