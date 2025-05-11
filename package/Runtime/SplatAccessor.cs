@@ -24,17 +24,19 @@ public class SplatAccessor : MonoBehaviour
     float uniformScale = 1f;
     public float damping = 5f;
 
-    int[] triangles;
-
     public bool isClicked = false;
     private bool isCreatingAsset = false;
 
     float frameCount = 0f;
 
-    Vector3[] originalVertices, displacedVertices;
-    Vector3[] transformedOriginalVertices, transformedDisplacedVertices, verticesGS;
-    Vector3[] vertexVelocities;
-    Vector3[] vertexVelocitiesGS;
+    NativeArray<float3> originalVertices;
+    NativeArray<float3> transformedOriginalVertices;
+    NativeArray<float3> displacedVertices;
+    NativeArray<float3> transformedDisplacedVertices;
+    NativeArray<float3> vertexVelocities;
+    NativeArray<float3> vertexVelocitiesGS;
+    NativeArray<float3> verticesGS;
+    NativeArray<int> triangles;
     List<List<List<float>>> decodedAlphas;
 
     NativeArray<float3> decodedAlphasNative;
@@ -68,22 +70,39 @@ public class SplatAccessor : MonoBehaviour
         GetComponent<MeshRenderer>().enabled = false; // Hide the mesh
         uniformScale = transform.localScale.x;
         deformingMesh = GetComponent<MeshFilter>().mesh;
-        originalVertices = deformingMesh.vertices;
 
-        // transformedOriginalVertices = SplatMathUtils.TransformVertices(deformingMesh.vertices);
-        transformedOriginalVertices = deformingMesh.vertices;
-        verticesGS = deformingMesh.vertices;
-        triangles = deformingMesh.triangles;
+        var verts = deformingMesh.vertices;
+        var tris = deformingMesh.triangles;
 
-        displacedVertices = new Vector3[originalVertices.Length];
-        transformedDisplacedVertices = new Vector3[originalVertices.Length];
-        for (int i = 0; i < originalVertices.Length; i++)
+        int vertexCount = verts.Length;
+        int triangleCount = tris.Length;
+
+        originalVertices = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+        displacedVertices = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+        vertexVelocities = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+
+        //TODO: refactor - don't use additional vertices
+        transformedOriginalVertices = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+        transformedDisplacedVertices = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+        vertexVelocitiesGS = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+
+        verticesGS = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+        triangles = new NativeArray<int>(triangleCount, Allocator.Persistent);
+
+        for (int i = 0; i < vertexCount; i++)
         {
-            displacedVertices[i] = originalVertices[i];
-            transformedDisplacedVertices[i] = transformedOriginalVertices[i];
+            float3 v = verts[i];
+            originalVertices[i] = v;
+            transformedOriginalVertices[i] = TransformVertex(v);
+            displacedVertices[i] = v;
+            transformedDisplacedVertices[i] = TransformVertex(v);
+            verticesGS[i] = v;
         }
-        vertexVelocities = new Vector3[originalVertices.Length];
-        vertexVelocitiesGS = new Vector3[originalVertices.Length];
+
+        for (int i = 0; i < triangleCount; i++)
+        {
+            triangles[i] = tris[i];
+        }
         inputSplatsData = new NativeArray<InputSplatRuntimeData>(_splatRenderer.asset.splatCount, Allocator.Persistent);
 
 
@@ -134,7 +153,7 @@ public class SplatAccessor : MonoBehaviour
             ReturnToOriginalShape();
         }
 
-        deformingMesh.vertices = displacedVertices;
+        deformingMesh.vertices = ConvertToVector3Array(displacedVertices);
         deformingMesh.RecalculateNormals();
         // Prepare NativeArrays
         faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, transformedDisplacedVertices, triangles, Allocator.Persistent);
@@ -160,81 +179,25 @@ public class SplatAccessor : MonoBehaviour
             isJobScheduled = false;
         }
 
+        Debug.Log("destroyed");
+        _splatRenderer.asset.SetRawChunkDataCreated(false);
+
         if (inputSplatsData.IsCreated)
             inputSplatsData.Dispose();
     }
 
+    public static Vector3[] ConvertToVector3Array(NativeArray<float3> nativeArray)
+    {
+        Vector3[] result = new Vector3[nativeArray.Length];
+        for (int i = 0; i < nativeArray.Length; i++)
+        {
+            float3 f = nativeArray[i];
+            result[i] = new Vector3(f.x, f.y, f.z);
+        }
+        return result;
+    }
 
 
-
-    // Update is called once per frame
-    /* void Update()
-     {
-         frameCount++;
-         var dis = isClicked ? 1f : 0f;
-         bool mouseDown = Input.GetMouseButton(0);
-         if (mouseDown)
-         {
-             for (int i = 0; i < displacedVertices.Length; i++)
-             {
-                 UpdateVertex(i, dis);
-
-             }
-
-         }
-         else
-         {
-             ReturnToOriginalShape();
-         }
-
-
-
-
-         deformingMesh.vertices = displacedVertices;
-
-         deformingMesh.RecalculateNormals();
-         // MarkAssetDirty();
-
-         if (needsAssetUpdate && !isCreatingAsset)
-         {
-             needsAssetUpdate = false;  // Reset flag
-             StartCoroutine(CreateAssetCoroutine());
-         }
-
-
-
-         var faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, displacedVertices, triangles, Allocator.Persistent);
-         var xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / 5, 5);
-         var (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, 5);
-
-
-         NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.Persistent);
-
-         var job = new CreateAssetDataJob()
-         {
-             m_InputPos = xyzValues,
-             m_InputRot = rotations,
-             m_InputScale = scalings,
-             m_Output = inputSplatsData
-         };
-         job.Schedule(xyzValues.Length, 8192).Complete();
-
-
-         CreateAsset(inputSplatsData);
-
-
-         rotations.Dispose();
-         scalings.Dispose();
-         inputSplatsData.Dispose();
-         xyzValues.Dispose();
-         faceVertices.Dispose();
-
-
-
-     }
-
-
- */
     public void SetClickState(bool clicked)
     {
         isClicked = clicked;
@@ -266,25 +229,66 @@ public class SplatAccessor : MonoBehaviour
         velocityGS *= 1f - damping * Time.deltaTime;
         vertexVelocitiesGS[i] = velocityGS;
 
-        displacedVertices[i] += velocity * (Time.deltaTime / uniformScale);
-
-
-        transformedDisplacedVertices[i] += velocityGS * (Time.deltaTime / uniformScale) + new Vector3(-transformedOriginalVertices[i].x * (Time.deltaTime / uniformScale) * dis, transformedOriginalVertices[i].y * (Time.deltaTime / uniformScale) * 1.5f * dis, transformedOriginalVertices[i].z * (Time.deltaTime / uniformScale) * dis);
-        //transformedDisplacedVertices[i] += velocityGS * (Time.deltaTime / uniformScale);
-
-        //transformedDisplacedVertices[i] = transformedOriginalVertices[i] + new Vector3(transformedOriginalVertices[i].x * Mathf.Sin(Time.time), 0, transformedOriginalVertices[i].z * Mathf.Sin(Time.time));
+        displacedVertices[i] += (float3)velocity * (Time.deltaTime / uniformScale);
+        //TODO: make sure it also works
+        // transformedDisplacedVertices[i] += (float3)velocity * (Time.deltaTime / uniformScale);
+        transformedDisplacedVertices[i] += (float3)velocityGS * (Time.deltaTime / uniformScale) + (float3)new Vector3(-transformedOriginalVertices[i].x * (Time.deltaTime / uniformScale) * dis, transformedOriginalVertices[i].y * (Time.deltaTime / uniformScale) * 1.5f * dis, transformedOriginalVertices[i].z * (Time.deltaTime / uniformScale) * dis);
 
     }
+    [BurstCompile]
+    struct AddDeformingForceJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<float3> displacedVertices;
+        [ReadOnly] public NativeArray<float3> transformedDisplacedVertices;
+
+        public NativeArray<float3> vertexVelocities;
+        public NativeArray<float3> vertexVelocitiesGS;
+
+        [ReadOnly] public Vector3 pointLocal;
+        [ReadOnly] public Vector3 force;
+        [ReadOnly] public float uniformScale;
+        [ReadOnly] public float deltaTime;
+
+        public void Execute(int i)
+        {
+            Vector3 pointToVertex = displacedVertices[i] - (float3)pointLocal;
+            Vector3 pointToVertexGS = transformedDisplacedVertices[i] - (float3)TransformVertex(pointLocal);
+
+            pointToVertex *= uniformScale;
+            pointToVertexGS *= uniformScale;
+
+            float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
+            float attenuationGS = 1f / (1f + pointToVertexGS.sqrMagnitude);
+
+            Vector3 appliedForce = force * attenuation * deltaTime;
+            Vector3 appliedForceGS = force * deltaTime;
+
+            vertexVelocities[i] += (float3)appliedForce;
+            vertexVelocitiesGS[i] += (float3)appliedForceGS;
+        }
+    }
+
 
     public void AddDeformingForce(Vector3 point, Vector3 force)
     {
 
-        for (int i = 0; i < displacedVertices.Length; i++)
-        {
-            AddForceToVertex(i, point, force);
-        }
 
-        Debug.DrawLine(Camera.main.transform.position, point, Color.red);
+        Vector3 pointLocal = transform.InverseTransformPoint(point);
+
+        var job = new AddDeformingForceJob
+        {
+            displacedVertices = displacedVertices,
+            transformedDisplacedVertices = transformedDisplacedVertices,
+            vertexVelocities = vertexVelocities,
+            vertexVelocitiesGS = vertexVelocitiesGS,
+            pointLocal = pointLocal,
+            force = force,
+            uniformScale = uniformScale,
+            deltaTime = Time.deltaTime
+        };
+
+        JobHandle handle = job.Schedule(displacedVertices.Length, 64);
+        handle.Complete();
     }
 
     public void AddDeformingForce(Vector3 point, float force)
@@ -299,42 +303,20 @@ public class SplatAccessor : MonoBehaviour
     void AddForceToVertex(int i, Vector3 point, float force)
     {
         point = transform.InverseTransformPoint(point);
-        Vector3 pointToVertex = displacedVertices[i] - point;
-        Vector3 pointToVertexGS = transformedDisplacedVertices[i] - point;
+        Vector3 pointToVertex = displacedVertices[i] - (float3)point;
+        Vector3 pointToVertexGS = transformedDisplacedVertices[i] - (float3)TransformVertex(point);
 
         pointToVertex *= uniformScale;
         float attenuatedForce = force / (1f + pointToVertex.sqrMagnitude);
         float velocity = attenuatedForce * Time.deltaTime;
-        vertexVelocities[i] += pointToVertex.normalized * velocity;
+        vertexVelocities[i] += (float3)pointToVertex.normalized * velocity;
 
         pointToVertexGS *= uniformScale;
         float attenuatedForceGS = force / (1f + pointToVertexGS.sqrMagnitude);
         float velocityGS = attenuatedForceGS * Time.deltaTime;
-        vertexVelocitiesGS[i] += pointToVertexGS.normalized * velocityGS;
+        vertexVelocitiesGS[i] += (float3)pointToVertexGS.normalized * velocityGS;
     }
 
-    void AddForceToVertex(int i, Vector3 point, Vector3 force)
-    {
-
-        Vector3 pointLocal = transform.InverseTransformPoint(point);
-        Vector3 pointCamera = new Vector3(2.0f, 3.3f, 0.0f);
-
-        Vector3 pointToVertex = displacedVertices[i] - pointLocal;
-        Vector3 pointToVertexGS = transformedDisplacedVertices[i] - pointLocal;
-
-        pointToVertexGS *= uniformScale;
-        float attenuationGS = 1f / (1f + pointToVertexGS.sqrMagnitude);
-        Vector3 appliedForceGS = force * Time.deltaTime;
-        vertexVelocitiesGS[i] += appliedForceGS;
-
-
-        pointToVertex *= uniformScale;
-        float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
-        Vector3 appliedForce = force * attenuation * Time.deltaTime;
-        vertexVelocities[i] += appliedForce;
-
-
-    }
     unsafe void CreateAsset(NativeArray<InputSplatRuntimeData> splatPosData)
     {
         var m_FormatPos = GaussianSplatAsset.VectorFormat.Norm11;
@@ -347,23 +329,28 @@ public class SplatAccessor : MonoBehaviour
         };
         boundsJob.Schedule().Complete();
 
+
         ReorderMorton(splatPosData, boundsMin, boundsMax, _splatRenderer);
 
+
         LinearizeData(splatPosData);
+
 
         var chunks = CreateChunkData(splatPosData, _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
         NativeArray<uint> data = CreatePosDataUint(splatPosData, m_FormatPos);
         NativeArray<uint> otherData = CreateOtherDataUint(splatPosData);
 
-
-
+        _splatRenderer.asset.SetIsSorting(true);
         _splatRenderer.asset.rawPosData = data;
         _splatRenderer.asset.rawOtherData = otherData;
+
+
+        _splatRenderer.asset.rawChunkData = _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>();
         if (frameCount == 1)
         {
-            _splatRenderer.asset.rawChunkData = _splatRenderer.asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>();
             _splatRenderer.asset.SetRawChunkDataCreated(true);
         }
+
 
 
         _splatRenderer.asset.rawChunkData = chunks;
@@ -584,7 +571,7 @@ public class SplatAccessor : MonoBehaviour
 
     static void ReorderMorton(NativeArray<InputSplatRuntimeData> splatData, float3 boundsMin, float3 boundsMax, GaussianSplatRenderer gs)
     {
-        gs.SetIsSorting(true);
+
         ReorderMortonJob order = new ReorderMortonJob
         {
             m_SplatData = splatData,
@@ -604,20 +591,6 @@ public class SplatAccessor : MonoBehaviour
         copy.Dispose();
 
         order.m_Order.Dispose();
-        gs.SetIsSorting(false);
-
-        /*
-        NativeArray<InputSplatRuntimeData> sortedData = new NativeArray<InputSplatRuntimeData>(splatData.Length, Allocator.Persistent);
-
-        for (int i = 0; i < sortedData.Length / 2; ++i)
-        {
-            sortedData[i] = splatData[order.m_Order[i].Item2];
-        }
-
-        NativeArray<InputSplatRuntimeData>.Copy(sortedData, splatData);
-
-        sortedData.Dispose();
-    */
     }
 
     [BurstCompile]
@@ -669,36 +642,6 @@ public class SplatAccessor : MonoBehaviour
             if (a.Item1 > b.Item1) return +1;
             return a.Item2 - b.Item2;
         }
-    }
-
-    private IEnumerator CreateAssetCoroutine()
-    {
-        isCreatingAsset = true;
-        var faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, verticesGS, triangles, Allocator.Persistent);
-        var xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / 5, 5);
-        var (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, 5);
-
-        NativeArray<InputSplatRuntimeData> inputSplatsData = new(_splatRenderer.asset.splatCount, Allocator.Persistent);
-
-        var job = new CreateAssetDataJob()
-        {
-            m_InputPos = xyzValues,
-            m_InputRot = rotations,
-            m_InputScale = scalings,
-            m_Output = inputSplatsData
-        };
-        job.Schedule(xyzValues.Length, 8192).Complete();
-
-        yield return null; // Let Unity breathe
-
-        CreateAsset(inputSplatsData);
-
-        rotations.Dispose();
-        scalings.Dispose();
-        inputSplatsData.Dispose();
-        xyzValues.Dispose();
-        faceVertices.Dispose();
-        isCreatingAsset = false;
     }
 
 
@@ -937,210 +880,6 @@ public class SplatAccessor : MonoBehaviour
     }
 
 
-
-
-    /*
-
-     public static NativeArray<uint> ReinterpretByteArrayAsUint(NativeArray<byte> byteData)
-    {
-        int dataLength = byteData.Length;
-        int count = dataLength / 4;
-        NativeArray<uint> result = new NativeArray<uint>(count, Allocator.Persistent);
-
-        byte[] buffer = new byte[4];
-
-        for (int i = 0; i < count; i++)
-        {
-            int baseIndex = i * 4;
-            buffer[0] = byteData[baseIndex];
-            buffer[1] = byteData[baseIndex + 1];
-            buffer[2] = byteData[baseIndex + 2];
-            buffer[3] = byteData[baseIndex + 3];
-
-            result[i] = BitConverter.ToUInt32(buffer, 0);
-        }
-
-        return result;
-    }
-
-        NativeArray<byte> CreateOtherData(NativeArray<InputSplatRuntimeData> inputSplats)
-    {
-        var m_FormatScale = GaussianSplatAsset.VectorFormat.Norm11;
-        int formatSize = GaussianSplatAsset.GetOtherSizeNoSHIndex(m_FormatScale); // 4 + 4
-        int dataLen = inputSplats.Length * formatSize;
-
-        dataLen = NextMultipleOf(dataLen, 8); // serialized as ulong
-        NativeArray<byte> data = new(dataLen, Allocator.TempJob);
-
-
-        CreateOtherDataJob job = new CreateOtherDataJob
-        {
-            m_Input = inputSplats,
-            m_ScaleFormat = m_FormatScale,
-            m_FormatSize = formatSize,
-            m_Output = data
-        };
-        job.Schedule(inputSplats.Length, 8192).Complete();
-
-        return data;
-    }
-
-       struct CreateOtherDataJob : IJobParallelFor
-    {
-        [ReadOnly] public NativeArray<InputSplatRuntimeData> m_Input;
-        public GaussianSplatAsset.VectorFormat m_ScaleFormat;
-        public int m_FormatSize;
-        [NativeDisableParallelForRestriction] public NativeArray<byte> m_Output;
-        const int ROTATION_SIZE = 4;
-        const int SCALE_SIZE = 4;
-        const int SH_INDEX_OFFSET = 8; // 4 + 4
-
-        public unsafe void Execute(int index)
-        {
-            byte* outputPtr = (byte*)m_Output.GetUnsafePtr() + index * m_FormatSize;
-
-            // rotation: 4 bytes
-            {
-                Quaternion rotQ = m_Input[index].rot;
-                float4 rot = new float4(rotQ.x, rotQ.y, rotQ.z, rotQ.w);
-                uint enc = EncodeQuatToNorm10(rot);
-                *(uint*)outputPtr = enc;
-                outputPtr += 4;
-            }
-
-            // scale: 6, 4 or 2 bytes
-            EmitEncodedVector(m_Input[index].scale, outputPtr, m_ScaleFormat, index);
-            outputPtr += GaussianSplatAsset.GetVectorSize(m_ScaleFormat);
-
-        }
-    }
-
-
-    struct CreatePositionsDataJob : IJobParallelFor
-    {
-        [ReadOnly] public NativeArray<InputSplatRuntimeData> m_Input;
-        public GaussianSplatAsset.VectorFormat m_Format;
-        public int m_FormatSize;
-        [NativeDisableParallelForRestriction] public NativeArray<byte> m_Output;
-
-        public unsafe void Execute(int index)
-        {
-            byte* outputPtr = (byte*)m_Output.GetUnsafePtr() + index * m_FormatSize;
-
-            EmitEncodedVector(m_Input[index].pos, outputPtr, m_Format, index);
-
-        }
-    }
-
-      List<List<List<float>>> DecodeAlphasv2(byte[] fileBytes, int numFaces)
-    {
-        int vectorSize = 12;
-        int numPoints = numFaces * 5;  // Assuming 5 points per triangle
-
-        // Ensure we have enough data in fileBytes to decode the alphas
-        if (fileBytes.Length < numPoints * vectorSize)
-        {
-            Debug.LogError($"Insufficient data: expected {numPoints * vectorSize} bytes, but got {fileBytes.Length} bytes.");
-
-        }
-
-        byte[] buffer = new byte[vectorSize];
-        List<List<List<float>>> decodedAlphas = new List<List<List<float>>>();
-
-        for (int i = 0; i < numFaces; i++)
-        {
-            List<List<float>> faceAlphas = new List<List<float>>();
-            for (int j = 0; j < 5; j++) // 5 points per triangle
-            {
-                int offset = (i * 5 + j) * vectorSize;
-                if (offset + vectorSize > fileBytes.Length)
-                {
-                    Debug.LogError($"Offset and length are out of bounds for the array. Offset: {offset}, VectorSize: {vectorSize}, FileLength: {fileBytes.Length}");
-                    break;
-                }
-
-                float x = System.BitConverter.ToSingle(fileBytes, offset);
-                float y = System.BitConverter.ToSingle(fileBytes, offset + 4);
-                float z = System.BitConverter.ToSingle(fileBytes, offset + 8);
-
-                faceAlphas.Add(new List<float> { x, y, z });
-
-                if (i * 5 + j < 10)
-                    Debug.Log($"DecodeAlphasv2 [{i * 5 + j}] = ({x}, {y}, {z})");
-
-
-            }
-            decodedAlphas.Add(faceAlphas);
-        }
-
-        return decodedAlphas;
-    }
-
-        List<float> DecodeScales(byte[] fileBytes, int numberOfSplats)
-    {
-        int vectorSize = GaussianSplatAsset.GetVectorSize(_splatRenderer.asset.posFormat);
-
-        // Ensure we have enough data in fileBytes to decode the alphas
-        if (fileBytes.Length < numberOfSplats * vectorSize)
-        {
-            Debug.LogError($"Insufficient data: expected {numberOfSplats * vectorSize} bytes, but got {fileBytes.Length} bytes.");
-
-        }
-
-        byte[] buffer = new byte[vectorSize];
-        List<float> decodedScales = new List<float>();
-
-        for (int i = 0; i < numberOfSplats; i++)
-        {
-            Buffer.BlockCopy(fileBytes, i * vectorSize, buffer, 0, vectorSize);
-
-            // Convert to float
-            float scale = System.BitConverter.ToSingle(buffer, 0);
-            decodedScales.Add(scale);
-        }
-
-        return decodedScales;
-    }
-    
-        static unsafe void EmitEncodedVector(float3 v, byte* outputPtr, GaussianSplatAsset.VectorFormat format, int index)
-    {
-        switch (format)
-        {
-            case GaussianSplatAsset.VectorFormat.Float32:
-                {
-                    *(float*)outputPtr = v.x;
-                    *(float*)(outputPtr + 4) = v.y;
-                    *(float*)(outputPtr + 8) = v.z;
-                }
-                break;
-            case GaussianSplatAsset.VectorFormat.Norm11:
-                {
-                    uint enc = EncodeFloat3ToNorm11(math.saturate(v));
-                    *(uint*)outputPtr = enc;
-                }
-                break;
-
-        }
-    }
-
-        static float3 DecodeNorm11ToFloat3(uint encoded)
-    {
-        // Bit layout: 11 bits X, 10 bits Y, 11 bits Z (total 32 bits)
-
-        // Masks:
-        const uint maskX = 0x7FF;    // 11 bits (0x7FF = 2047)
-        const uint maskY = 0x3FF;    // 10 bits (0x3FF = 1023)
-        const uint maskZ = 0x7FF;    // 11 bits (0x7FF = 2047)
-
-        // Extract and normalize components
-        float x = (float)(encoded & maskX) / maskX;           // X: bits 0-10
-        float y = (float)((encoded >> 11) & maskY) / maskY;    // Y: bits 11-20
-        float z = (float)((encoded >> 21) & maskZ) / maskZ;    // Z: bits 21-31
-
-        return new float3(x, y, z);
-    }
-
-    */
 
 
 

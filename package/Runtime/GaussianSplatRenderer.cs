@@ -396,13 +396,25 @@ namespace GaussianSplatting.Runtime
             tex.SetPixelData(asset.colorData.GetData<byte>(), 0);
             tex.Apply(false, true);
             m_GpuColorData = tex;
+
+
+
             if (asset.chunkData != null && asset.chunkData.dataSize != 0)
             {
                 m_GpuChunks = new GraphicsBuffer(GraphicsBuffer.Target.Structured,
                     (int)(asset.chunkData.dataSize / UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>()),
                     UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>())
                 { name = "GaussianChunkData" };
-                m_GpuChunks.SetData(asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
+                if (asset.GetRawChunkDataCreated())
+                {
+                    m_GpuChunks.SetData(asset.rawChunkData);
+                    Debug.LogError($"setting raw chunk data");
+                }
+                else
+                {
+                    m_GpuChunks.SetData(asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
+
+                }
                 m_GpuChunksValid = true;
             }
             else
@@ -413,10 +425,7 @@ namespace GaussianSplatting.Runtime
                 { name = "GaussianChunkData" };
                 m_GpuChunksValid = false;
             }
-            if (asset.GetRawChunkDataCreated())
-            {
-                m_GpuChunks.SetData(asset.rawChunkData);
-            }
+
 
 
             m_GpuView = new GraphicsBuffer(GraphicsBuffer.Target.Structured, m_Asset.splatCount, kGpuViewDataSize);
@@ -553,6 +562,7 @@ namespace GaussianSplatting.Runtime
 
             DisposeBuffer(ref m_GpuPosData);
             DisposeBuffer(ref m_GpuOtherData);
+
             DisposeBuffer(ref m_GpuSHData);
             DisposeBuffer(ref m_GpuChunks);
 

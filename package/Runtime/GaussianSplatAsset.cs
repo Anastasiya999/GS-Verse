@@ -323,7 +323,7 @@ namespace GaussianSplatting.Runtime
 
                 m_rawPosData = value;
                 m_rawPosDataIsOwned = true; // Because setter is used, we assume you own it
-                                            //  SetDataHash(ComputeHashFromNativeArray(value));
+
 
             }
         }
@@ -355,7 +355,7 @@ namespace GaussianSplatting.Runtime
 
                 m_rawOtherData = value;
                 m_rawOtherDataIsOwned = true; // Because setter is used, we assume you own it
-                                              //  SetDataHash(ComputeHashFromNativeArray(value));
+
 
             }
         }

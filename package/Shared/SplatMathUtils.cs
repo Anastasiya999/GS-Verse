@@ -182,6 +182,39 @@ namespace GaussianSplatting.Shared
             return faceVertices;
         }
 
+        public static NativeArray<float3> GetMeshFaceVerticesNative(GameObject gameObject, NativeArray<float3> Vertices, NativeArray<int> triangles, Allocator allocator)
+        {
+            MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
+            if (meshFilter == null)
+            {
+                Debug.LogError("No MeshFilter component found on the GameObject.");
+                return default;
+            }
+
+            Mesh mesh = meshFilter.mesh;
+            if (mesh == null)
+            {
+                Debug.LogError("No mesh found in the MeshFilter component.");
+                return default;
+            }
+
+            var vertices = Vertices;
+            int totalFaces = triangles.Length / 3;
+
+            NativeArray<float3> faceVertices = new NativeArray<float3>(totalFaces * 3, allocator);
+
+            for (int i = 0; i < totalFaces; i++)
+            {
+                int baseIndex = i * 3;
+
+                faceVertices[baseIndex] = vertices[triangles[baseIndex]];
+                faceVertices[baseIndex + 1] = vertices[triangles[baseIndex + 1]];
+                faceVertices[baseIndex + 2] = vertices[triangles[baseIndex + 2]];
+            }
+
+            return faceVertices;
+        }
+
         public static Vector3[] TransformVertices(Vector3[] vertices)
         {
             Vector3[] transformedVertices = new Vector3[vertices.Length];
@@ -193,6 +226,19 @@ namespace GaussianSplatting.Shared
                     -vertices[i].z,
                     vertices[i].y
                 );
+            }
+
+            return transformedVertices;
+        }
+
+        public static NativeArray<float3> TransformVertices(NativeArray<float3> vertices)
+        {
+            NativeArray<float3> transformedVertices = new NativeArray<float3>(vertices.Length, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                float3 v = vertices[i];
+                transformedVertices[i] = new float3(v.x, -v.z, v.y);
             }
 
             return transformedVertices;

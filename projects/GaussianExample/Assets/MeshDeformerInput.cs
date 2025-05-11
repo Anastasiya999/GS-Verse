@@ -55,7 +55,7 @@ public class MeshDeformerInput : MonoBehaviour
                     Vector3 dragForce = dragDirection * dragStrength;
                     deformer.AddDeformingForce(currentHitPoint, dragForce);
                     lastDeformer.SetClickState(true);
-                    // deformer.AddDeformingForce(currentHitPoint, force);
+                    //deformer.AddDeformingForce(currentHitPoint, force);
                 }
 
                 deformer.SetClickState(mouseDown);
