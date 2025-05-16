@@ -10,7 +10,7 @@ using Unity.Mathematics;
 using Unity.Profiling;
 using Unity.Profiling.LowLevel;
 
-namespace GaussianSplatting.Editor.Utils
+namespace GaussianSplatting.Runtime.Utils
 {
     // Implementation of "Mini Batch" k-means clustering ("Web-Scale K-Means Clustering", Sculley 2010)
     // using k-means++ for cluster initialization.
@@ -25,7 +25,7 @@ namespace GaussianSplatting.Editor.Utils
         static ProfilerMarker s_ProfAssignClusters = new(ProfilerCategory.Render, "KMeans.AssignClusters", MarkerFlags.SampleGPU);
         static ProfilerMarker s_ProfUpdateMeans = new(ProfilerCategory.Render, "KMeans.UpdateMeans", MarkerFlags.SampleGPU);
 
-        public static bool Calculate(int dim, NativeArray<float> inputData, int batchSize, float passesOverData, Func<float,bool> progress, NativeArray<float> outClusterMeans, NativeArray<int> outDataLabels)
+        public static bool Calculate(int dim, NativeArray<float> inputData, int batchSize, float passesOverData, Func<float, bool> progress, NativeArray<float> outClusterMeans, NativeArray<int> outDataLabels)
         {
             // Parameter checks
             if (dim < 1)
@@ -118,7 +118,7 @@ namespace GaussianSplatting.Editor.Utils
                 };
                 for (int i = 0; i < dataSize; i += kAssignBatchCount)
                 {
-                    if (progress != null && !progress(0.7f + (float) i / dataSize * 0.3f))
+                    if (progress != null && !progress(0.7f + (float)i / dataSize * 0.3f))
                     {
                         cancelled = true;
                         break;
@@ -143,8 +143,8 @@ namespace GaussianSplatting.Editor.Utils
             {
                 // 8x wide with AVX
                 int i = 0;
-                float* aptr = (float*) a.GetUnsafeReadOnlyPtr() + aIndex;
-                float* bptr = (float*) b.GetUnsafeReadOnlyPtr() + bIndex;
+                float* aptr = (float*)a.GetUnsafeReadOnlyPtr() + aIndex;
+                float* bptr = (float*)b.GetUnsafeReadOnlyPtr() + bIndex;
                 for (; i + 7 < dim; i += 8)
                 {
                     v256 va = X86.Avx.mm256_loadu_ps(aptr);
@@ -171,8 +171,8 @@ namespace GaussianSplatting.Editor.Utils
             {
                 // 4x wide with NEON
                 int i = 0;
-                float* aptr = (float*) a.GetUnsafeReadOnlyPtr() + aIndex;
-                float* bptr = (float*) b.GetUnsafeReadOnlyPtr() + bIndex;
+                float* aptr = (float*)a.GetUnsafeReadOnlyPtr() + aIndex;
+                float* bptr = (float*)b.GetUnsafeReadOnlyPtr() + bIndex;
                 for (; i + 3 < dim; i += 4)
                 {
                     v128 va = Arm.Neon.vld1q_f32(aptr);
@@ -209,8 +209,8 @@ namespace GaussianSplatting.Editor.Utils
 
         static unsafe void CopyElem(int dim, NativeArray<float> src, int srcIndex, NativeArray<float> dst, int dstIndex)
         {
-            UnsafeUtility.MemCpy((float*) dst.GetUnsafePtr() + dstIndex * dim,
-                (float*) src.GetUnsafeReadOnlyPtr() + srcIndex * dim, dim * 4);
+            UnsafeUtility.MemCpy((float*)dst.GetUnsafePtr() + dstIndex * dim,
+                (float*)src.GetUnsafeReadOnlyPtr() + srcIndex * dim, dim * 4);
         }
 
         [BurstCompile]
@@ -289,7 +289,7 @@ namespace GaussianSplatting.Editor.Utils
             float acc = 0.0f;
             if (indexL > 0)
             {
-                acc = partialSums[indexL-1];
+                acc = partialSums[indexL - 1];
             }
 
             // Now search for the needed point
@@ -418,7 +418,7 @@ namespace GaussianSplatting.Editor.Utils
             [ReadOnly] public NativeArray<float> data;
             [ReadOnly] public NativeArray<float> means;
             [NativeDisableParallelForRestriction] public NativeArray<int> clusters;
-            [NativeDisableContainerSafetyRestriction] [NativeDisableParallelForRestriction] public NativeArray<float> distances;
+            [NativeDisableContainerSafetyRestriction][NativeDisableParallelForRestriction] public NativeArray<float> distances;
 
             public void Execute(int index)
             {
@@ -505,7 +505,7 @@ namespace GaussianSplatting.Editor.Utils
             }
         }
 
-        static bool InitializeCentroids(int dim, NativeArray<float> inputData, int initBatchSize, ref uint rngState, int initAttempts, NativeArray<float> outClusters, Func<float,bool> progress)
+        static bool InitializeCentroids(int dim, NativeArray<float> inputData, int initBatchSize, ref uint rngState, int initAttempts, NativeArray<float> outClusters, Func<float, bool> progress)
         {
             using var prof = s_ProfPlusPlus.Auto();
 
@@ -527,7 +527,7 @@ namespace GaussianSplatting.Editor.Utils
             bool cancelled = false;
             for (int ia = 0; ia < initAttempts; ++ia)
             {
-                if (progress != null && !progress((float) ia / initAttempts * 0.3f))
+                if (progress != null && !progress((float)ia / initAttempts * 0.3f))
                 {
                     cancelled = true;
                     break;

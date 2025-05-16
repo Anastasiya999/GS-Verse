@@ -25,8 +25,6 @@ namespace GaussianSplatting.Runtime
         public static GaussianSplatRenderSystem instance => ms_Instance ??= new GaussianSplatRenderSystem();
         static GaussianSplatRenderSystem ms_Instance;
 
-        static bool m_isSorting;
-
         readonly Dictionary<GaussianSplatRenderer, MaterialPropertyBlock> m_Splats = new();
         readonly HashSet<Camera> m_CameraCommandBuffersDone = new();
         readonly List<(GaussianSplatRenderer, MaterialPropertyBlock)> m_ActiveSplats = new();
@@ -287,8 +285,7 @@ namespace GaussianSplatting.Runtime
         internal Material m_MatDebugBoxes;
 
         internal int m_FrameCounter;
-        internal bool m_isSorting = false;
-        GaussianSplatAsset m_PrevAsset;
+        IGaussianSplatAsset m_PrevAsset;
         Hash128 m_PrevHash;
         bool m_Registered;
 
@@ -344,7 +341,17 @@ namespace GaussianSplatting.Runtime
         [field: NonSerialized] public uint editCutSplats { get; private set; }
         [field: NonSerialized] public Bounds editSelectedBounds { get; private set; }
 
-        public GaussianSplatAsset asset => m_Asset;
+        private IGaussianSplatAsset m_injectedAsset;
+
+        public IGaussianSplatAsset asset
+        {
+            get
+            {
+                if (m_injectedAsset != null)
+                    return m_injectedAsset;
+                return m_Asset;
+            }
+        }
         public int splatCount => m_SplatCount;
 
         enum KernelIndices
@@ -367,16 +374,22 @@ namespace GaussianSplatting.Runtime
         }
 
         public bool HasValidAsset =>
-            m_Asset != null &&
-            m_Asset.splatCount > 0 &&
-            m_Asset.formatVersion == GaussianSplatAsset.kCurrentVersion &&
-            m_Asset.posData != null &&
-            m_Asset.otherData != null &&
-            m_Asset.shData != null &&
-            m_Asset.colorData != null;
+            asset != null &&
+            asset.splatCount > 0 &&
+            asset.formatVersion == GaussianSplatAsset.kCurrentVersion &&
+            asset.posData != null &&
+            asset.otherData != null &&
+            asset.shData != null &&
+            asset.colorData != null;
         public bool HasValidRenderSetup => m_GpuPosData != null && m_GpuOtherData != null && m_GpuChunks != null;
 
         const int kGpuViewDataSize = 40;
+
+        public void InjectAsset(IGaussianSplatAsset injectedAsset)
+        {
+            if (asset != null) asset.Dispose();
+            m_injectedAsset = injectedAsset;
+        }
 
         void CreateResourcesForAsset()
         {
@@ -396,25 +409,13 @@ namespace GaussianSplatting.Runtime
             tex.SetPixelData(asset.colorData.GetData<byte>(), 0);
             tex.Apply(false, true);
             m_GpuColorData = tex;
-
-
-
             if (asset.chunkData != null && asset.chunkData.dataSize != 0)
             {
                 m_GpuChunks = new GraphicsBuffer(GraphicsBuffer.Target.Structured,
                     (int)(asset.chunkData.dataSize / UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>()),
                     UnsafeUtility.SizeOf<GaussianSplatAsset.ChunkInfo>())
                 { name = "GaussianChunkData" };
-                if (asset.GetRawChunkDataCreated())
-                {
-                    m_GpuChunks.SetData(asset.rawChunkData);
-                    Debug.LogError($"setting raw chunk data");
-                }
-                else
-                {
-                    m_GpuChunks.SetData(asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
-
-                }
+                m_GpuChunks.SetData(asset.chunkData.GetData<GaussianSplatAsset.ChunkInfo>());
                 m_GpuChunksValid = true;
             }
             else
@@ -426,9 +427,7 @@ namespace GaussianSplatting.Runtime
                 m_GpuChunksValid = false;
             }
 
-
-
-            m_GpuView = new GraphicsBuffer(GraphicsBuffer.Target.Structured, m_Asset.splatCount, kGpuViewDataSize);
+            m_GpuView = new GraphicsBuffer(GraphicsBuffer.Target.Structured, asset.splatCount, kGpuViewDataSize);
             m_GpuIndexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Index, 36, 2);
             // cube indices, most often we use only the first quad
             m_GpuIndexBuffer.SetData(new ushort[]
@@ -506,7 +505,6 @@ namespace GaussianSplatting.Runtime
             EnsureMaterials();
             EnsureSorterAndRegister();
 
-
             CreateResourcesForAsset();
         }
 
@@ -525,7 +523,7 @@ namespace GaussianSplatting.Runtime
             cmb.SetComputeBufferParam(cs, kernelIndex, Props.OrderBuffer, m_GpuSortKeys);
 
             cmb.SetComputeIntParam(cs, Props.SplatBitsValid, m_GpuEditSelected != null && m_GpuEditDeleted != null ? 1 : 0);
-            uint format = (uint)m_Asset.posFormat | ((uint)m_Asset.scaleFormat << 8) | ((uint)m_Asset.shFormat << 16);
+            uint format = (uint)asset.posFormat | ((uint)asset.scaleFormat << 8) | ((uint)asset.shFormat << 16);
             cmb.SetComputeIntParam(cs, Props.SplatFormat, (int)format);
             cmb.SetComputeIntParam(cs, Props.SplatCount, m_SplatCount);
             cmb.SetComputeIntParam(cs, Props.SplatChunkCount, m_GpuChunksValid ? m_GpuChunks.count : 0);
@@ -544,7 +542,7 @@ namespace GaussianSplatting.Runtime
             mat.SetBuffer(Props.SplatSelectedBits, m_GpuEditSelected ?? m_GpuPosData);
             mat.SetBuffer(Props.SplatDeletedBits, m_GpuEditDeleted ?? m_GpuPosData);
             mat.SetInt(Props.SplatBitsValid, m_GpuEditSelected != null && m_GpuEditDeleted != null ? 1 : 0);
-            uint format = (uint)m_Asset.posFormat | ((uint)m_Asset.scaleFormat << 8) | ((uint)m_Asset.shFormat << 16);
+            uint format = (uint)asset.posFormat | ((uint)asset.scaleFormat << 8) | ((uint)asset.shFormat << 16);
             mat.SetInteger(Props.SplatFormat, (int)format);
             mat.SetInteger(Props.SplatCount, m_SplatCount);
             mat.SetInteger(Props.SplatChunkCount, m_GpuChunksValid ? m_GpuChunks.count : 0);
@@ -562,7 +560,6 @@ namespace GaussianSplatting.Runtime
 
             DisposeBuffer(ref m_GpuPosData);
             DisposeBuffer(ref m_GpuOtherData);
-
             DisposeBuffer(ref m_GpuSHData);
             DisposeBuffer(ref m_GpuChunks);
 
@@ -635,7 +632,6 @@ namespace GaussianSplatting.Runtime
             m_CSSplatUtilities.GetKernelThreadGroupSizes((int)KernelIndices.CalcViewData, out uint gsX, out _, out _);
             cmb.DispatchCompute(m_CSSplatUtilities, (int)KernelIndices.CalcViewData, (m_GpuView.count + (int)gsX - 1) / (int)gsX, 1, 1);
         }
-
         internal void SortPoints(CommandBuffer cmd, Camera cam, Matrix4x4 matrix)
         {
             if (cam.cameraType == CameraType.Preview)
@@ -652,7 +648,7 @@ namespace GaussianSplatting.Runtime
             cmd.SetComputeBufferParam(m_CSSplatUtilities, (int)KernelIndices.CalcDistances, Props.SplatSortKeys, m_GpuSortKeys);
             cmd.SetComputeBufferParam(m_CSSplatUtilities, (int)KernelIndices.CalcDistances, Props.SplatChunks, m_GpuChunks);
             cmd.SetComputeBufferParam(m_CSSplatUtilities, (int)KernelIndices.CalcDistances, Props.SplatPos, m_GpuPosData);
-            cmd.SetComputeIntParam(m_CSSplatUtilities, Props.SplatFormat, (int)m_Asset.posFormat);
+            cmd.SetComputeIntParam(m_CSSplatUtilities, Props.SplatFormat, (int)asset.posFormat);
             cmd.SetComputeMatrixParam(m_CSSplatUtilities, Props.MatrixMV, worldToCamMatrix * matrix);
             cmd.SetComputeIntParam(m_CSSplatUtilities, Props.SplatCount, m_SplatCount);
             cmd.SetComputeIntParam(m_CSSplatUtilities, Props.SplatChunkCount, m_GpuChunksValid ? m_GpuChunks.count : 0);
@@ -660,6 +656,7 @@ namespace GaussianSplatting.Runtime
             cmd.DispatchCompute(m_CSSplatUtilities, (int)KernelIndices.CalcDistances, (m_GpuSortDistances.count + (int)gsX - 1) / (int)gsX, 1, 1);
 
             // sort the splats
+            //TODO check whether we need this
             EnsureSorterAndRegister();
             m_Sorter.Dispatch(cmd, m_SorterArgs);
             cmd.EndSample(s_ProfSort);
@@ -667,11 +664,11 @@ namespace GaussianSplatting.Runtime
 
         public void Update()
         {
-            var curHash = m_Asset ? m_Asset.dataHash : new Hash128();
-            var output = m_Asset ? "m_asset" : "new hash";
-            if (m_PrevAsset != m_Asset || m_PrevHash != curHash)
+            var curHash = asset != null ? asset.dataHash : new Hash128();
+            if (m_PrevAsset != asset || m_PrevHash != curHash)
             {
-                m_PrevAsset = m_Asset;
+                m_PrevAsset?.Dispose();
+                m_PrevAsset = asset;
                 m_PrevHash = curHash;
                 if (resourcesAreSetUp)
                 {
@@ -690,13 +687,13 @@ namespace GaussianSplatting.Runtime
             Camera mainCam = Camera.main;
             if (!mainCam)
                 return;
-            if (!m_Asset || m_Asset.cameras == null)
+            if (asset == null || asset.cameras == null)
                 return;
 
             var selfTr = transform;
             var camTr = mainCam.transform;
             var prevParent = camTr.parent;
-            var cam = m_Asset.cameras[index];
+            var cam = asset.cameras[index];
             camTr.parent = selfTr;
             camTr.localPosition = cam.pos;
             camTr.localRotation = Quaternion.LookRotation(cam.axisZ, cam.axisY);
@@ -866,6 +863,7 @@ namespace GaussianSplatting.Runtime
             DispatchUtilsAndExecute(cmb, KernelIndices.SelectionUpdate, m_SplatCount);
             UpdateEditCountsAndBounds();
         }
+
 
         public void EditTranslateSelection(Vector3 localSpacePosDelta)
         {

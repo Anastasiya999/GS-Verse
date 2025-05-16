@@ -1,4 +1,4 @@
-﻿/*
+/*
 Embedded TinyJSON from https://github.com/pbhogan/TinyJSON (version 71fed96, 2019 May 10) directly here, with
 custom namespace wrapped around it so it does not clash with any other embedded TinyJSON. Original license:
 
@@ -31,7 +31,7 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Text;
 
-namespace GaussianSplatting.Editor.Utils
+namespace GaussianSplatting.Runtime.Utils
 {
     // Really simple JSON parser in ~300 lines
     // - Attempts to parse JSON files with minimal GC allocation
@@ -198,7 +198,7 @@ namespace GaussianSplatting.Editor.Utils
             if (type == typeof(DateTime))
             {
                 DateTime result;
-                DateTime.TryParse(json.Replace("\"",""), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out result);
+                DateTime.TryParse(json.Replace("\"", ""), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out result);
                 return result;
             }
             if (json == "null")

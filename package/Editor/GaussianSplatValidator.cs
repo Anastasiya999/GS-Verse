@@ -54,7 +54,7 @@ namespace GaussianSplatting.Editor
             };
 
             var cam = Camera.main;
-            var oldAsset = gaussians.asset;
+            var oldAsset = gaussians.m_Asset;
             var oldCamPos = cam.transform.localPosition;
             var oldCamRot = cam.transform.localRotation;
             var oldCamFov = cam.fieldOfView;
@@ -121,15 +121,15 @@ namespace GaussianSplatting.Editor
                         $"{refPrefix} {item.assetPath} cam {item.cameraIndex}: RMSE {rmse:F2} PSNR {psnr:F2} diff pixels {errorsCount:N0}");
 
                     NativeArray<byte> pngBytes = ImageConversion.EncodeNativeArrayToPNG(diffPixels,
-                        GraphicsFormat.R8G8B8A8_SRGB, (uint) width, (uint) height);
+                        GraphicsFormat.R8G8B8A8_SRGB, (uint)width, (uint)height);
                     File.WriteAllBytes(pathDif, pngBytes.ToArray());
                     pngBytes.Dispose();
                     pngBytes = ImageConversion.EncodeNativeArrayToPNG(refPixels, GraphicsFormat.R8G8B8A8_SRGB,
-                        (uint) width, (uint) height);
+                        (uint)width, (uint)height);
                     File.WriteAllBytes(pathRef, pngBytes.ToArray());
                     pngBytes.Dispose();
                     pngBytes = ImageConversion.EncodeNativeArrayToPNG(gotPixels, GraphicsFormat.R8G8B8A8_SRGB,
-                        (uint) width, (uint) height);
+                        (uint)width, (uint)height);
                     File.WriteAllBytes(pathGot, pngBytes.ToArray());
                     pngBytes.Dispose();
                 }
@@ -202,8 +202,8 @@ namespace GaussianSplatting.Editor
                 double meanSqDif = sumSqDif / (refPixels.Length * 3);
                 double rmse = math.sqrt(meanSqDif);
                 double psnr = 20.0 * math.log10(255.0) - 10.0 * math.log10(rmse * rmse);
-                *rmsePtr = (float) rmse;
-                *psnrPtr = (float) psnr;
+                *rmsePtr = (float)rmse;
+                *psnrPtr = (float)psnr;
             }
         }
     }

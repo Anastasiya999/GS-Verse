@@ -2,7 +2,8 @@
     "name": "MyGameAssets",
     "rootNamespace": "",
     "references": [
-        "GUID:4b653174f8fcdcd49b4c9a6f1ca8c7c3"
+        "GUID:4b653174f8fcdcd49b4c9a6f1ca8c7c3",
+        "GUID:4f5c0c83dfd6a0743834baba2b4de79e"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
