@@ -85,7 +85,6 @@ namespace GaussianSplatting.Runtime
             GaussianSplatAssetCreateTask.LinearizeData(inputSplats);
 
 
-
             // cluster SHs
             NativeArray<int> splatSHIndices = default;
             NativeArray<GaussianSplatAsset.SHTableItemFloat16> clusteredSHs = default;

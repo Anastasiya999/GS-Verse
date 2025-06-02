@@ -39,40 +39,31 @@ public class MeshDeformerInput : MonoBehaviour
 
             if (deformer)
             {
-                // Vector3 point = hit.point;
-
-                // point += hit.normal * forceOffset;
-
-
-
-
                 Vector3 currentHitPoint = hit.point + hit.normal * forceOffset;
 
-                if (lastHitPoint.HasValue)
+                if (mouseDown)
                 {
-                    Vector3 dragDirection = (currentHitPoint - lastHitPoint.Value);
-                    float dragStrength = 100f; // tweak to get a stronger or softer effect
+                    if (lastHitPoint.HasValue)
+                    {
+                        Vector3 dragDirection = currentHitPoint - lastHitPoint.Value;
+                        float dragStrength = 100f;
 
-                    Vector3 dragForce = dragDirection * dragStrength;
-                    deformer.AddDeformingForce(currentHitPoint, dragForce);
-                    lastDeformer.SetClickState(true);
-                    //deformer.AddDeformingForce(currentHitPoint, force);
+                        Vector3 dragForce = dragDirection * dragStrength;
+                        deformer.AddDeformingForce(currentHitPoint, dragForce);
+                        deformer.SetClickState(true);
+                    }
+
+                    lastHitPoint = currentHitPoint;
+                    lastDeformer = deformer;
                 }
-
-                deformer.SetClickState(mouseDown);
-
-                // Reset the previous one if it's different
-                if (lastDeformer != null && lastDeformer != deformer)
+                else
                 {
-                    lastDeformer.SetClickState(false);
+                    // Mouse released
+                    deformer.SetClickState(false);
+                    lastHitPoint = null;
+                    lastDeformer = null;
                 }
-
-                lastDeformer = deformer;
-
-                lastHitPoint = currentHitPoint;
             }
-
-
 
         }
         else

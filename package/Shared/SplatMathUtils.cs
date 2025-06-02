@@ -207,13 +207,45 @@ namespace GaussianSplatting.Shared
             {
                 int baseIndex = i * 3;
 
-                faceVertices[baseIndex] = vertices[triangles[baseIndex]];
-                faceVertices[baseIndex + 1] = vertices[triangles[baseIndex + 1]];
-                faceVertices[baseIndex + 2] = vertices[triangles[baseIndex + 2]];
+                faceVertices[baseIndex] = TransformVertex(vertices[triangles[baseIndex]]);
+                faceVertices[baseIndex + 1] = TransformVertex(vertices[triangles[baseIndex + 1]]);
+                faceVertices[baseIndex + 2] = TransformVertex(vertices[triangles[baseIndex + 2]]);
             }
 
             return faceVertices;
         }
+
+        public static NativeArray<float3> GetMeshFaceSelectedVerticesNative(NativeArray<float3> vertices, NativeArray<int> triangles, NativeArray<int> originalTriangleIndices, Allocator allocator)
+        {
+            var faceVertices = new NativeArray<float3>(originalTriangleIndices.Length * 3, allocator);
+
+            for (int i = 0; i < originalTriangleIndices.Length; i++)
+            {
+                int triIndex = originalTriangleIndices[i];
+                int baseIdx = triIndex * 3;
+
+                int i0 = triangles[baseIdx];
+                int i1 = triangles[baseIdx + 1];
+                int i2 = triangles[baseIdx + 2];
+
+                faceVertices[i * 3 + 0] = TransformVertex(vertices[i0]);
+                faceVertices[i * 3 + 1] = TransformVertex(vertices[i1]);
+                faceVertices[i * 3 + 2] = TransformVertex(vertices[i2]);
+            }
+
+            return faceVertices;
+        }
+
+        public static Vector3 TransformVertex(Vector3 v)
+        {
+            return new Vector3(
+                     v.x,
+                    -v.z,
+                     v.y
+                    );
+
+        }
+
 
         public static Vector3[] TransformVertices(Vector3[] vertices)
         {

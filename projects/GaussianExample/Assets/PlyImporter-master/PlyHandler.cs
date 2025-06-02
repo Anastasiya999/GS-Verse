@@ -41,12 +41,12 @@ namespace ThreeDeeBear.Models.Ply
                 colors.Add(ParseColor(xyzrgb, header));
             });
 
-             Debug.LogWarning(faceStartIndex);
-              Debug.LogWarning( header.FaceCount);
-               Debug.LogWarning( plyFile.Count);
+            Debug.LogWarning(faceStartIndex);
+            Debug.LogWarning(header.FaceCount);
+            Debug.LogWarning(plyFile.Count);
 
 
-            plyFile.GetRange(faceStartIndex-1, header.FaceCount).ForEach(face =>
+            plyFile.GetRange(faceStartIndex - 1, header.FaceCount).ForEach(face =>
             {
                 triangles.AddRange(GetTriangles(face, header));
             });

@@ -127,14 +127,6 @@ namespace GaussianSplatting.Editor
 
             GUILayout.Label("Preprocessing", EditorStyles.boldLabel);
 
-            // Button to preprocess and load vertices
-            if (GUILayout.Button("Load Vertices"))
-            {
-                //TODO: for debugging
-                //InitializeTrimeshFaceMapping(m_InputJsonTrimeshMappingFile);
-                //LoadVerticesFromSceneObject();
-            }
-
 
             EditorGUILayout.Space();
 
@@ -166,7 +158,9 @@ namespace GaussianSplatting.Editor
                 GUILayout.Space(EditorGUIUtility.singleLineHeight);
 
             EditorGUILayout.Space();
+
             GUILayout.Label("Output", EditorStyles.boldLabel);
+
             rect = EditorGUILayout.GetControlRect(true);
             string newOutputFolder = m_FilePicker.PathFieldGUI(rect, new GUIContent("Output Folder"), m_OutputFolder, null, "GaussianAssetOutputFolder");
             if (newOutputFolder != m_OutputFolder)
@@ -585,7 +579,7 @@ namespace GaussianSplatting.Editor
             // Debug: Print the first values of _alpha and _scale
             if (modelParams._alpha != null && modelParams._alpha.Count > 0)
             {
-                Debug.Log($"First _alpha value: {modelParams._alpha[0][0][0]}, type of alphas: {modelParams._alpha[0].GetType()}");
+                Debug.Log($"First _alpha value: {modelParams._alpha.Count} {modelParams._alpha[0].Count}, type of alphas: {modelParams._alpha[0][0].Count}");
             }
 
             if (modelParams._scale != null && modelParams._scale.Count > 0)
@@ -622,10 +616,13 @@ namespace GaussianSplatting.Editor
             GaussianSplatAsset.CameraInfo[] cameras = LoadJsonCamerasFile(m_InputPointCloudFile, m_ImportCameras);
 
             //create object
-            var gameObject = CreateGameObjectFromPly(m_InputFile, m_SelectedSceneObject);
+            // var gameObject = CreateGameObjectFromPly(m_InputFile, m_SelectedSceneObject);
+            var gameObject = m_SelectedSceneObject;
             var (alphas, scales) = LoadModelParams(m_InputJsonFile);
 
             var normalizedAlpha = NormalizeAlphas(alphas);
+
+            Debug.Log($"Finished generating colors. Total colors created: {normalizedAlpha.Count} vs {normalizedAlpha[0].Count} vs {normalizedAlpha[0][0].Count} ");
 
             using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(normalizedAlpha, scales, gameObject, 9);
 
@@ -633,9 +630,8 @@ namespace GaussianSplatting.Editor
 
             using NativeArray<InputSplatData> inputSplatsWithColors = ReplaceSplatData(inputSplats, inputSplatsColored);
 
-            Debug.Log($"scale shape: {scales.Count} {scales[0].Count} {alphas.Count} vs inputsplats: {inputSplats.Length}");
-
             Debug.Log($"InputSplat count {inputSplats.Length}");
+
             Debug.Log($"InputSplatWithColors count {inputSplatsWithColors.Length}");
 
             Debug.Log($"First Splat Position from Create asset: {inputSplatsWithColors[0].scale} {GaussianUtils.LinearScale(inputSplatsWithColors[0].scale)}");
@@ -693,11 +689,11 @@ namespace GaussianSplatting.Editor
             bool useChunks = isUsingChunks;
             if (useChunks)
                 CreateChunkData(inputSplatsWithColors, pathChunk, ref dataHash);
-            Debug.Log($"First Splat Position from Create asset after reorder: {inputSplatsWithColors[0].scale} {isUsingChunks}");
+            Debug.Log($"First Splat Position from Create asset after reorder: {inputSplatsWithColors[0].scale} {normalizedAlpha[0][0].Count}");
 
             CreatePositionsData(inputSplatsWithColors, pathPos, ref dataHash);
             CreateScaleData(scales, pathScale, ref dataHash);
-            CreateAlphasData(normalizedAlpha, pathAlpha, ref dataHash, 5);
+            CreateAlphasData(normalizedAlpha, pathAlpha, ref dataHash, normalizedAlpha[0][0].Count);
             CreateOtherData(inputSplatsWithColors, pathOther, ref dataHash, splatSHIndices);
             CreateColorData(inputSplatsWithColors, pathCol, ref dataHash);
             CreateSHData(inputSplatsWithColors, pathSh, ref dataHash, clusteredSHs);
@@ -861,7 +857,9 @@ namespace GaussianSplatting.Editor
             }
 
 
+            // Vector3[] vertices = mesh.vertices;
             Vector3[] vertices = TransformVertices(mesh.vertices);
+
             List<Vector3> faceVerticesList = new List<Vector3>();
             var triangles = mesh.triangles;
 
@@ -891,8 +889,12 @@ namespace GaussianSplatting.Editor
                 transformedVertices[i] = new Vector3(
                     vertices[i].x,
                     -vertices[i].z,
-                    vertices[i].y
+                vertices[i].y
                 );
+
+
+
+
             }
 
             return transformedVertices;
@@ -911,6 +913,8 @@ namespace GaussianSplatting.Editor
                 Vector3 v0 = vertices[i * 3];
                 Vector3 v1 = vertices[i * 3 + 1];
                 Vector3 v2 = vertices[i * 3 + 2];
+
+
 
 
                 var triangleAphas = normalizedAlphas[i];
@@ -1012,19 +1016,11 @@ namespace GaussianSplatting.Editor
                 //Converting to Quaternion
                 Quaternion rotation = rotationMatrix.rotation;
                 rotation = new Quaternion(rotation.w, rotation.x, rotation.y, rotation.z);
-                if (i == 0)
-                {
-                    Debug.Log($"normal {normal}: \n" +
-                         $"basis1 {basis1}, \n" +
-                         $"basis2 {basis2}\n");
-
-                }
-
 
 
                 for (int j = 0; j < numPtsEachTriangle; j++)
                 {
-                    List<float> scaleFactor = scales[i * 5 + j];
+                    List<float> scaleFactor = scales[i * numPtsEachTriangle + j];
                     float x = math.log(ReLU(scaleFactor[0] * s0) + eps_s0);
                     float y = math.log(ReLU(scaleFactor[0] * s1) + eps_s0);
                     float z = math.log(ReLU(scaleFactor[0] * s2) + eps_s0);
@@ -1034,12 +1030,7 @@ namespace GaussianSplatting.Editor
 
                 }
 
-                /*Debug.Log($"Triangle {i}: \n" +
-                          $"Vertices: v0={v0}, v1={v1}, v2={v2}\n" +
-                          $"Centroid: {centroid}\n" +
-                          $"Rotation: {rotation.eulerAngles} (Euler Angles)\n" +
-                          $"Scaling: x={x:F4}, y={y:F4}, z={z:F4}");
-*/
+
             }
 
             return (rotations, scalings);
@@ -1208,14 +1199,14 @@ namespace GaussianSplatting.Editor
 
         unsafe NativeArray<InputSplatData> CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, GameObject gameObject, int maxShDegree)
         {
-            int numOfSplatsPerFace = 5;
+            int numOfSplatsPerFace = alphas[0][0].Count;
             var faceVertices = GetMeshFaceVertices(gameObject);
             List<Vector3> positions = CalculateXYZ(faceVertices, numOfSplatsPerFace, alphas);
             List<Vector3> normals = GenerateNormals(positions.Count);
             List<Vector3> colors = SH2RGB(GenerateRandomColors(positions.Count));
             List<List<float[]>> features = CreateFeatures(colors, maxShDegree);
             var (rotations, scalings) = GenerateRotationsAndScales(faceVertices, scales, numOfSplatsPerFace);
-            Debug.Log($"First Splat rotation from CreateSplatDataFromMemory: {rotations[0]}");
+            Debug.Log($"First Splat rotation from CreateSplatDataFromMemory: {alphas[0].Count}");
 
 
             NativeArray<InputSplatData> data = new NativeArray<InputSplatData>(positions.Count, Allocator.Persistent);
