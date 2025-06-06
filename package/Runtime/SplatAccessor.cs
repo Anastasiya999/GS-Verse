@@ -79,7 +79,8 @@ namespace GaussianSplatting.Runtime
         private NativeArray<int> selectedBackgroundVertexIndices;
         private JobHandle createAssetBgJobHandle;
 
-        private bool isJobScheduled = false;
+        private bool isCreateAssetJobActive = false;
+
 
         private bool isSegmented = false;
 
@@ -271,7 +272,7 @@ namespace GaussianSplatting.Runtime
         void Update()
         {
 
-            if (isJobScheduled)
+            if (isCreateAssetJobActive)
             {
                 if (createAssetJobHandle.IsCompleted)
                 {
@@ -284,7 +285,7 @@ namespace GaussianSplatting.Runtime
                     scalings.Dispose();
                     faceVertices.Dispose();
 
-                    isJobScheduled = false;
+                    isCreateAssetJobActive = false;
                 }
                 return;
             }
@@ -294,6 +295,7 @@ namespace GaussianSplatting.Runtime
             bool mouseDown = Input.GetMouseButton(0);
             if (mouseDown)
             {
+
                 if (IsSelectionMode())
                 {
                     var springJob = new VertexSpringJobSelected
@@ -332,10 +334,11 @@ namespace GaussianSplatting.Runtime
                     handle.Complete();
                 }
 
-
             }
             else
             {
+
+
                 if (IsSelectionMode())
                 {
                     ReturnToOriginalShapeSelected(selectedVertexIndices);
@@ -345,50 +348,57 @@ namespace GaussianSplatting.Runtime
                     ReturnToOriginalShape();
                 }
 
+
+
             }
 
-            deformingMesh.vertices = ConvertToVector3Array(displacedVertices);
+            deformingMesh.SetVertices(displacedVertices);
 
-            if (IsSelectionMode())
+            if (!isCreateAssetJobActive)
             {
-                faceVertices = SplatMathUtils.GetMeshFaceSelectedVerticesNative(displacedVertices, triangles, originalTriangleIndices, Allocator.Persistent);
-                xyzValues = CreateXYZDataSelected(decodedAlphasNative, faceVertices, originalTriangleIndices, numberPtsPerTriangle);
-                (rotations, scalings) = CreateScaleRotationDataSelected(faceVertices, decodedScalesNative, originalTriangleIndices, numberPtsPerTriangle);
-
-                var job = new CreateAssetDataJobSelected()
+                if (IsSelectionMode())
                 {
-                    m_InputPos = xyzValues,
-                    m_InputRot = rotations,
-                    m_InputScale = scalings,
-                    m_Output = inputSplatsData,
-                    m_PrevOutput = runTimeInputSplatsData,
-                    m_originalTriangleIndices = originalTriangleIndices,
-                    m_numberPtsPerTriangle = numberPtsPerTriangle
 
-                };
+                    faceVertices = SplatMathUtils.GetMeshFaceSelectedVerticesNative(displacedVertices, triangles, originalTriangleIndices, Allocator.Persistent);
+                    xyzValues = CreateXYZDataSelected(decodedAlphasNative, faceVertices, originalTriangleIndices, numberPtsPerTriangle);
+                    (rotations, scalings) = CreateScaleRotationDataSelected(faceVertices, decodedScalesNative, originalTriangleIndices, numberPtsPerTriangle);
 
-                createAssetJobHandle = job.Schedule(originalTriangleIndices.Length * numberPtsPerTriangle, 8192);
-            }
-            else
-            {
-                faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, displacedVertices, triangles, Allocator.Persistent);
-                xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / numberPtsPerTriangle, numberPtsPerTriangle);
-                (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, numberPtsPerTriangle);
+                    var job = new CreateAssetDataJobSelected()
+                    {
+                        m_InputPos = xyzValues,
+                        m_InputRot = rotations,
+                        m_InputScale = scalings,
+                        m_Output = inputSplatsData,
+                        m_PrevOutput = runTimeInputSplatsData,
+                        m_originalTriangleIndices = originalTriangleIndices,
+                        m_numberPtsPerTriangle = numberPtsPerTriangle
 
-                var job = new CreateAssetDataJob()
+                    };
+
+                    createAssetJobHandle = job.Schedule(originalTriangleIndices.Length * numberPtsPerTriangle, 8192);
+                }
+                else
                 {
-                    m_InputPos = xyzValues,
-                    m_InputRot = rotations,
-                    m_InputScale = scalings,
-                    m_Output = inputSplatsData,
-                    m_PrevOutput = runTimeInputSplatsData,
+                    faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, displacedVertices, triangles, Allocator.Persistent);
+                    xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / numberPtsPerTriangle, numberPtsPerTriangle);
+                    (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, numberPtsPerTriangle);
 
-                };
-                createAssetJobHandle = job.Schedule(xyzValues.Length, 8192);
+                    var job = new CreateAssetDataJob()
+                    {
+                        m_InputPos = xyzValues,
+                        m_InputRot = rotations,
+                        m_InputScale = scalings,
+                        m_Output = inputSplatsData,
+                        m_PrevOutput = runTimeInputSplatsData,
+
+                    };
+                    createAssetJobHandle = job.Schedule(xyzValues.Length, 8192);
+                }
+
+
+                isCreateAssetJobActive = true;
             }
 
-
-            isJobScheduled = true;
 
 
         }
@@ -403,10 +413,10 @@ namespace GaussianSplatting.Runtime
         void OnDestroy()
         {
 
-            if (isJobScheduled)
+            if (isCreateAssetJobActive)
             {
                 createAssetJobHandle.Complete();
-                isJobScheduled = false;
+                isCreateAssetJobActive = false;
             }
 
 
@@ -467,7 +477,6 @@ namespace GaussianSplatting.Runtime
 
         public static Vector3[] ConvertToVector3Array(NativeArray<float3> nativeArray)
         {
-            //TODO: create job?
             Vector3[] result = new Vector3[nativeArray.Length];
             for (int i = 0; i < nativeArray.Length; i++)
             {
@@ -490,7 +499,8 @@ namespace GaussianSplatting.Runtime
                 displacedVertices[i] = Vector3.Lerp(displacedVertices[i], originalVertices[i], Time.deltaTime * 5f);
             }
 
-            deformingMesh.vertices = ConvertToVector3Array(displacedVertices);
+
+            deformingMesh.SetVertices(displacedVertices);
         }
 
         void ReturnToOriginalShapeSelected(NativeArray<int> selectedVertexIndices)
@@ -501,7 +511,7 @@ namespace GaussianSplatting.Runtime
                 displacedVertices[index] = Vector3.Lerp(displacedVertices[index], originalVertices[index], Time.deltaTime * 5f);
             }
 
-            deformingMesh.vertices = ConvertToVector3Array(displacedVertices);
+            deformingMesh.SetVertices(displacedVertices);
         }
 
         [BurstCompile]
@@ -587,6 +597,36 @@ namespace GaussianSplatting.Runtime
             }
         }
 
+        [BurstCompile]
+        struct AddDeformingForceJobSelected : IJobParallelFor
+        {
+
+            [NativeDisableParallelForRestriction] public NativeArray<float3> displacedVertices;
+
+            [NativeDisableParallelForRestriction] public NativeArray<float3> vertexVelocities;
+
+            [ReadOnly] public NativeArray<int> selectedVertexIndices;
+
+            [ReadOnly] public Vector3 pointLocal;
+            [ReadOnly] public Vector3 force;
+            [ReadOnly] public float uniformScale;
+            [ReadOnly] public float deltaTime;
+
+            public void Execute(int index)
+            {
+                int i = selectedVertexIndices[index];
+                Vector3 pointToVertex = displacedVertices[i] - (float3)pointLocal;
+                pointToVertex *= uniformScale;
+
+                float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
+                Vector3 appliedForce = force * attenuation * deltaTime;
+                vertexVelocities[i] += (float3)appliedForce;
+
+
+            }
+        }
+
+
 
         public void AddDeformingForce(Vector3 point, Vector3 force)
         {
@@ -594,18 +634,39 @@ namespace GaussianSplatting.Runtime
 
             Vector3 pointLocal = transform.InverseTransformPoint(point);
 
-            var job = new AddDeformingForceJob
+            if (IsSelectionMode())
             {
-                displacedVertices = displacedVertices,
-                vertexVelocities = vertexVelocities,
-                pointLocal = pointLocal,
-                force = force,
-                uniformScale = uniformScale,
-                deltaTime = Time.deltaTime
-            };
+                var job = new AddDeformingForceJobSelected
+                {
+                    displacedVertices = displacedVertices,
+                    vertexVelocities = vertexVelocities,
+                    selectedVertexIndices = selectedVertexIndices,
+                    pointLocal = pointLocal,
+                    force = force,
+                    uniformScale = uniformScale,
+                    deltaTime = Time.deltaTime
+                };
 
-            JobHandle handle = job.Schedule(displacedVertices.Length, 64);
-            handle.Complete();
+                JobHandle handle = job.Schedule(selectedVertexIndices.Length, 64);
+                handle.Complete();
+            }
+            else
+            {
+                var job = new AddDeformingForceJob
+                {
+                    displacedVertices = displacedVertices,
+                    vertexVelocities = vertexVelocities,
+                    pointLocal = pointLocal,
+                    force = force,
+                    uniformScale = uniformScale,
+                    deltaTime = Time.deltaTime
+                };
+
+                JobHandle handle = job.Schedule(displacedVertices.Length, 64);
+                handle.Complete();
+            }
+
+
         }
 
 
