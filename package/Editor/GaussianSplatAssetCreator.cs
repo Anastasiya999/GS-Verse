@@ -66,6 +66,7 @@ namespace GaussianSplatting.Editor
         int m_PrevVertexCount;
         long m_PrevFileSize;
 
+
         GameObject loadedObject;
 
         bool isUsingChunks =>
@@ -147,7 +148,7 @@ namespace GaussianSplatting.Editor
                 }
 
                 m_PrevFileSize = File.Exists(m_InputPointCloudFile) ? new FileInfo(m_InputFile).Length : 0;
-                m_PrevFilePath = m_InputPointCloudFile;
+                m_PrevPlyPath = m_InputPointCloudFile;
 
 
             }
@@ -277,18 +278,6 @@ namespace GaussianSplatting.Editor
                 default:
                     throw new ArgumentOutOfRangeException();
             }
-        }
-
-        // input file splat data is expected to be in this format
-        public struct InputSplatData
-        {
-            public Vector3 pos;
-            public Vector3 nor;
-            public Vector3 dc0;
-            public Vector3 sh1, sh2, sh3, sh4, sh5, sh6, sh7, sh8, sh9, shA, shB, shC, shD, shE, shF;
-            public float opacity;
-            public Vector3 scale;
-            public Quaternion rot;
         }
 
         static T CreateOrReplaceAsset<T>(T asset, string path) where T : UnityEngine.Object
@@ -724,6 +713,105 @@ namespace GaussianSplatting.Editor
             Selection.activeObject = savedAsset;
         }
 
+        void CreateScaleData(List<List<float>> scales, string filePath, ref Hash128 dataHash)
+        {
+            int dataLen = scales.Count * 4;
+            int splatCount = scales.Count;
+
+            NativeArray<float> flatScale = new(splatCount, Allocator.TempJob);
+
+            for (int i = 0; i < splatCount; i++)
+            {
+                flatScale[i] = scales[i][0];
+            }
+
+            dataLen = NextMultipleOf(dataLen, 8); // serialized as ulong
+            NativeArray<byte> data = new(dataLen, Allocator.TempJob);
+
+            CreateScaleDataJob job = new CreateScaleDataJob
+            {
+                m_Input = flatScale,
+                m_FormatSize = 4,
+                m_Output = data
+            };
+            job.Schedule(splatCount, 8192).Complete();
+
+            dataHash.Append(data);
+
+            using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+            fs.Write(data);
+
+            data.Dispose();
+        }
+
+        [BurstCompile]
+        struct CreateScaleDataJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<float> m_Input;
+            public int m_FormatSize;
+            [NativeDisableParallelForRestriction] public NativeArray<byte> m_Output;
+
+            public unsafe void Execute(int index)
+            {
+                byte* outputPtr = (byte*)m_Output.GetUnsafePtr() + index * m_FormatSize;
+                EmitEncodedFloat(m_Input[index], outputPtr);
+            }
+        }
+
+        void CreateAlphasData(List<List<List<float>>> alphas, string filePath, ref Hash128 dataHash, int pointsPerTriangle)
+        {
+            int dataLen = alphas.Count * GaussianSplatAsset.GetVectorSize(GaussianSplatAsset.VectorFormat.Float32) * pointsPerTriangle;
+            int splatCount = alphas.Count;
+            int totalFloat3Count = splatCount * pointsPerTriangle;
+
+            NativeArray<float3> flatAlphas = new(totalFloat3Count, Allocator.TempJob);
+
+            for (int i = 0; i < splatCount; i++)
+            {
+                for (int j = 0; j < pointsPerTriangle; j++)
+                {
+                    var a = alphas[i][j];
+                    flatAlphas[i * pointsPerTriangle + j] = new float3(a[0], a[1], a[2]);
+                }
+            }
+
+            dataLen = NextMultipleOf(dataLen, 8); // serialized as ulong
+            NativeArray<byte> data = new(dataLen, Allocator.TempJob);
+
+            CreateAlphaDataJob job = new CreateAlphaDataJob
+            {
+                m_Input = flatAlphas,
+                m_Format = GaussianSplatAsset.VectorFormat.Float32,
+                m_FormatSize = GaussianSplatAsset.GetVectorSize(GaussianSplatAsset.VectorFormat.Float32),
+                m_Output = data
+            };
+            job.Schedule(totalFloat3Count, 8192).Complete();
+
+            dataHash.Append(data);
+
+            using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+            fs.Write(data);
+
+            data.Dispose();
+        }
+
+        [BurstCompile]
+        struct CreateAlphaDataJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<float3> m_Input;
+            public GaussianSplatAsset.VectorFormat m_Format;
+            public int m_FormatSize;
+            [NativeDisableParallelForRestriction] public NativeArray<byte> m_Output;
+
+            public unsafe void Execute(int index)
+            {
+                byte* outputPtr = (byte*)m_Output.GetUnsafePtr() + index * m_FormatSize;
+                EmitEncodedVector(m_Input[index], outputPtr, m_Format);
+            }
+        }
+
+
+
         NativeArray<InputSplatData> LoadInputSplatFile(string filePath)
         {
             NativeArray<InputSplatData> data = default;
@@ -736,6 +824,11 @@ namespace GaussianSplatting.Editor
             {
                 GaussianFileReader.ReadFile(filePath, out data);
             }
+            catch (Exception ex)
+            {
+                m_ErrorMessage = ex.Message;
+            }
+            return data;
         }
 
         private void DebugInputSplats(NativeArray<InputSplatData> inputSplats)

@@ -10,6 +10,7 @@ using Unity.Mathematics;
 using UnityEditor;
 using UnityEditor.EditorTools;
 using UnityEngine;
+using GaussianSplatting.Runtime.Utils;
 using GaussianSplatRenderer = GaussianSplatting.Runtime.GaussianSplatRenderer;
 
 namespace GaussianSplatting.Editor
@@ -398,13 +399,13 @@ namespace GaussianSplatting.Editor
             if (string.IsNullOrWhiteSpace(path))
                 return;
 
-            int kSplatSize = UnsafeUtility.SizeOf<Utils.InputSplatData>();
+            int kSplatSize = UnsafeUtility.SizeOf<InputSplatData>();
             using var gpuData = new GraphicsBuffer(GraphicsBuffer.Target.Structured, gs.splatCount, kSplatSize);
 
             if (!gs.EditExportData(gpuData, bakeTransform))
                 return;
 
-            Utils.InputSplatData[] data = new Utils.InputSplatData[gpuData.count];
+            InputSplatData[] data = new InputSplatData[gpuData.count];
             gpuData.GetData(data);
 
             var gpuDeleted = gs.GpuEditDeleted;
