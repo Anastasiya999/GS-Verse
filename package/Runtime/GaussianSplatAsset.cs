@@ -30,6 +30,8 @@ namespace GaussianSplatting.Runtime
         public Vector3 boundsMax => m_BoundsMax;
         public Hash128 dataHash => m_DataHash;
 
+        public bool isGaMeS_asset => m_AlphaData != null && m_ScaleData != null;
+
         // Match VECTOR_FMT_* in HLSL
         public enum VectorFormat
         {
@@ -135,7 +137,7 @@ namespace GaussianSplatting.Runtime
             m_DataHash = hash;
         }
 
-        public void SetAssetFiles(TextAsset dataChunk, TextAsset dataPos, TextAsset dataOther, TextAsset dataColor, TextAsset dataSh, TextAsset dataAlpha, TextAsset dataScale)
+        public void SetAssetFiles(TextAsset dataChunk, TextAsset dataPos, TextAsset dataOther, TextAsset dataColor, TextAsset dataSh, TextAsset dataAlpha = null, TextAsset dataScale = null)
         {
             m_ChunkData = dataChunk;
             m_PosData = dataPos;
@@ -229,7 +231,6 @@ namespace GaussianSplatting.Runtime
         [SerializeField] TextAsset m_PosData;
 
         [SerializeField] TextAsset m_AlphaData;
-
         [SerializeField] TextAsset m_ScaleData;
         [SerializeField] TextAsset m_ColorData;
         [SerializeField] TextAsset m_OtherData;
@@ -245,7 +246,6 @@ namespace GaussianSplatting.Runtime
         private GaussianSplatData m_SplatOtherData;
         private GaussianSplatData m_SplatSHData;
         private GaussianSplatData m_SplatChunkData;
-
         private GaussianSplatData m_SplatAlphaData;
         private GaussianSplatData m_SplatScaleData;
 
@@ -253,31 +253,14 @@ namespace GaussianSplatting.Runtime
         [SerializeField] List<List<List<float>>> m_alphas;
         [SerializeField] string m_PointCloudPath;
 
-        [SerializeField] NativeArray<uint> m_rawPosData;
-        [SerializeField] NativeArray<uint> m_rawOtherData;
-        [SerializeField] NativeArray<ChunkInfo> m_rawChunkData;
-        [SerializeField] bool m_rawPosDataIsOwned;
-        [SerializeField] bool m_rawOtherDataIsOwned;
-        [SerializeField] bool m_rawChunkDataIsOwned;
-
         public VectorFormat posFormat => m_PosFormat;
         public VectorFormat scaleFormat => m_ScaleFormat;
         public SHFormat shFormat => m_SHFormat;
         public ColorFormat colorFormat => m_ColorFormat;
 
-
-
-
-
         public TextAsset alphaData => m_AlphaData;
         public TextAsset scaleData => m_ScaleData;
-
         public string pointCloudPath => m_PointCloudPath;
-
-        private NativeArray<ChunkInfo> _rawChunkData;
-
-
-
 
         public IGaussianSplatData posData
         {
@@ -333,11 +316,6 @@ namespace GaussianSplatting.Runtime
         }
 
 
-        private void OnDestroy()
-        {
-            if (_rawChunkData.IsCreated)
-                _rawChunkData.Dispose();
-        }
         public CameraInfo[] cameras => m_Cameras;
 
         public List<List<List<float>>> alphas => m_alphas;

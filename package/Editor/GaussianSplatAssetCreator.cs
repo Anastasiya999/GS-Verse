@@ -21,6 +21,35 @@ namespace GaussianSplatting.Editor
     [BurstCompile]
     public class GaussianSplatAssetCreator : EditorWindow
     {
+
+        public enum InputMode
+        {
+            GaussianSplatting,
+            GaMeS
+        }
+
+        // --- Member Variables (State) ---
+        private InputMode m_SelectedMode = InputMode.GaMeS;
+
+        // File pickers and input paths
+        readonly FilePickerControl m_FilePicker = new();
+        [SerializeField] string m_InputFile;
+        [SerializeField] string m_InputPointCloudFile;
+        [SerializeField] string m_InputJsonFile;
+        [SerializeField] GameObject m_SelectedSceneObject;
+
+        // Output settings
+        [SerializeField] string m_OutputFolder = "Assets/GaussianAssets";
+        [SerializeField] DataQuality m_Quality = DataQuality.Medium;
+        private bool m_ImportCameras = true;
+
+        // Format settings
+        [SerializeField] GaussianSplatAsset.VectorFormat m_FormatPos;
+        [SerializeField] GaussianSplatAsset.VectorFormat m_FormatScale;
+        [SerializeField] GaussianSplatAsset.ColorFormat m_FormatColor;
+        [SerializeField] GaussianSplatAsset.SHFormat m_FormatSH;
+
+        // Constants for saved preferences
         const string kProgressTitle = "Creating Gaussian Splat Asset";
         const string kCamerasJson = "cameras.json";
         const string kPrefQuality = "nesnausk.GaussianSplatting.CreatorQuality";
@@ -31,7 +60,14 @@ namespace GaussianSplatting.Editor
 
         private static readonly string filePath = "Assets/mesh_vertices.txt";
 
-        private Dictionary<string, int> trimeshFaceMapping = new Dictionary<string, int>();
+
+        // Cached file info
+        private string m_PrevPlyPath;
+        private int m_PrevVertexCount;
+        private long m_PrevFileSize;
+        private string m_ErrorMessage;
+
+
         private List<Vector3> m_Vertices;
 
         enum DataQuality
@@ -43,37 +79,15 @@ namespace GaussianSplatting.Editor
             VeryLow,
             Custom,
         }
-
-        readonly FilePickerControl m_FilePicker = new();
-
-        [SerializeField] string m_InputFile;
-        [SerializeField] string m_InputPointCloudFile;
         [SerializeField] string m_ObjFilePath;
-        [SerializeField] string m_InputJsonFile;  // For the JSON file
-        [SerializeField] string m_InputJsonTrimeshMappingFile;
-        [SerializeField] bool m_ImportCameras = true;
-        [SerializeField] GameObject m_SelectedSceneObject;
 
-        [SerializeField] string m_OutputFolder = "Assets/GaussianAssets";
-        [SerializeField] DataQuality m_Quality = DataQuality.Medium;
-        [SerializeField] GaussianSplatAsset.VectorFormat m_FormatPos;
-        [SerializeField] GaussianSplatAsset.VectorFormat m_FormatScale;
-        [SerializeField] GaussianSplatAsset.ColorFormat m_FormatColor;
-        [SerializeField] GaussianSplatAsset.SHFormat m_FormatSH;
-
-        string m_ErrorMessage;
-        string m_PrevPlyPath;
-        int m_PrevVertexCount;
-        long m_PrevFileSize;
-
-
-        GameObject loadedObject;
 
         bool isUsingChunks =>
             m_FormatPos != GaussianSplatAsset.VectorFormat.Float32 ||
             m_FormatScale != GaussianSplatAsset.VectorFormat.Float32 ||
             m_FormatColor != GaussianSplatAsset.ColorFormat.Float32x4 ||
             m_FormatSH != GaussianSplatAsset.SHFormat.Float32;
+
 
         [MenuItem("Tools/Gaussian Splats/Create GaussianSplatAsset")]
         public static void Init()
@@ -95,148 +109,24 @@ namespace GaussianSplatting.Editor
             ApplyQualityLevel();
         }
 
+
         void OnGUI()
         {
-            EditorGUILayout.Space();
-            GUILayout.Label("Input data", EditorStyles.boldLabel);
-            var rect = EditorGUILayout.GetControlRect(true);
-            m_InputFile = m_FilePicker.PathFieldGUI(rect, new GUIContent("Input mesh PLY File"), m_InputFile, "ply", "PointCloudFile");
+            DrawModeSelector();
 
-            var rectSecond = EditorGUILayout.GetControlRect(true);
-            m_InputPointCloudFile = m_FilePicker.PathFieldGUI(rectSecond, new GUIContent("Input pointCloud PLY File"), m_InputPointCloudFile, "ply", "PointCloudFile");
-
-            // JSON file input field
-            string jsonFilePath = m_InputJsonFile;
-            jsonFilePath = EditorGUILayout.TextField("Input JSON params File", jsonFilePath);
-            if (GUILayout.Button("Browse for JSON File..."))
+            if (m_SelectedMode == InputMode.GaussianSplatting)
             {
-
-                string path = EditorUtility.OpenFilePanel("Select JSON File", "", "json");
-                if (!string.IsNullOrEmpty(path))
-                {
-                    m_InputJsonFile = path;
-                }
+                DrawStandardInputGUI();
             }
-
-            //  EditorGUILayout.BeginHorizontal();
-            GUILayout.Label("Input Data Source", EditorStyles.boldLabel);
-
-            // Scene Object Selection
-            m_SelectedSceneObject = (GameObject)EditorGUILayout.ObjectField("Scene Object", m_SelectedSceneObject, typeof(GameObject), true);
-
-
-
-            GUILayout.Label("Preprocessing", EditorStyles.boldLabel);
-
-
-            EditorGUILayout.Space();
-
-            m_ImportCameras = EditorGUILayout.Toggle("Import Cameras", m_ImportCameras);
-
-
-            if (m_InputPointCloudFile != m_PrevPlyPath && !string.IsNullOrWhiteSpace(m_InputPointCloudFile))
-            {
-                m_PrevVertexCount = 0;
-                m_ErrorMessage = null;
-                try
-                {
-                    m_PrevVertexCount = GaussianFileReader.ReadFileHeader(m_InputPointCloudFile);
-                }
-                catch (Exception ex)
-                {
-                    m_ErrorMessage = ex.Message;
-                }
-
-                m_PrevFileSize = File.Exists(m_InputPointCloudFile) ? new FileInfo(m_InputFile).Length : 0;
-                m_PrevPlyPath = m_InputPointCloudFile;
-
-
-            }
-
-            if (m_PrevVertexCount > 0)
-                EditorGUILayout.LabelField("File Size", $"{EditorUtility.FormatBytes(m_PrevFileSize)} - {m_PrevVertexCount:N0} splats");
             else
-                GUILayout.Space(EditorGUIUtility.singleLineHeight);
-
-            EditorGUILayout.Space();
-
-            GUILayout.Label("Output", EditorStyles.boldLabel);
-
-            rect = EditorGUILayout.GetControlRect(true);
-            string newOutputFolder = m_FilePicker.PathFieldGUI(rect, new GUIContent("Output Folder"), m_OutputFolder, null, "GaussianAssetOutputFolder");
-            if (newOutputFolder != m_OutputFolder)
             {
-                m_OutputFolder = newOutputFolder;
-                EditorPrefs.SetString(kPrefOutputFolder, m_OutputFolder);
+                DrawGaMeSInputGUI();
             }
 
-            var newQuality = (DataQuality)EditorGUILayout.EnumPopup("Quality", m_Quality);
-            if (newQuality != m_Quality)
-            {
-                m_Quality = newQuality;
-                EditorPrefs.SetInt(kPrefQuality, (int)m_Quality);
-                ApplyQualityLevel();
-            }
 
-            long sizePos = 0, sizeOther = 0, sizeCol = 0, sizeSHs = 0, totalSize = 0;
-            if (m_PrevVertexCount > 0)
-            {
-                sizePos = GaussianSplatAsset.CalcPosDataSize(m_PrevVertexCount, m_FormatPos);
-                sizeOther = GaussianSplatAsset.CalcOtherDataSize(m_PrevVertexCount, m_FormatScale);
-                sizeCol = GaussianSplatAsset.CalcColorDataSize(m_PrevVertexCount, m_FormatColor);
-                sizeSHs = GaussianSplatAsset.CalcSHDataSize(m_PrevVertexCount, m_FormatSH);
-                long sizeChunk = isUsingChunks ? GaussianSplatAsset.CalcChunkDataSize(m_PrevVertexCount) : 0;
-                totalSize = sizePos + sizeOther + sizeCol + sizeSHs + sizeChunk;
-            }
+            DrawCommonOutputGUI();
+            DrawCreateButtonAndError();
 
-            const float kSizeColWidth = 70;
-            EditorGUI.BeginDisabledGroup(m_Quality != DataQuality.Custom);
-            EditorGUI.indentLevel++;
-            GUILayout.BeginHorizontal();
-            m_FormatPos = (GaussianSplatAsset.VectorFormat)EditorGUILayout.EnumPopup("Position", m_FormatPos);
-            GUILayout.Label(sizePos > 0 ? EditorUtility.FormatBytes(sizePos) : string.Empty, GUILayout.Width(kSizeColWidth));
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            m_FormatScale = (GaussianSplatAsset.VectorFormat)EditorGUILayout.EnumPopup("Scale", m_FormatScale);
-            GUILayout.Label(sizeOther > 0 ? EditorUtility.FormatBytes(sizeOther) : string.Empty, GUILayout.Width(kSizeColWidth));
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            m_FormatColor = (GaussianSplatAsset.ColorFormat)EditorGUILayout.EnumPopup("Color", m_FormatColor);
-            GUILayout.Label(sizeCol > 0 ? EditorUtility.FormatBytes(sizeCol) : string.Empty, GUILayout.Width(kSizeColWidth));
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            m_FormatSH = (GaussianSplatAsset.SHFormat)EditorGUILayout.EnumPopup("SH", m_FormatSH);
-            GUIContent shGC = new GUIContent();
-            shGC.text = sizeSHs > 0 ? EditorUtility.FormatBytes(sizeSHs) : string.Empty;
-            if (m_FormatSH >= GaussianSplatAsset.SHFormat.Cluster64k)
-            {
-                shGC.tooltip = "Note that SH clustering is not fast! (3-10 minutes for 6M splats)";
-                shGC.image = EditorGUIUtility.IconContent("console.warnicon.sml").image;
-            }
-            GUILayout.Label(shGC, GUILayout.Width(kSizeColWidth));
-            GUILayout.EndHorizontal();
-            EditorGUI.indentLevel--;
-            EditorGUI.EndDisabledGroup();
-            if (totalSize > 0)
-                EditorGUILayout.LabelField("Asset Size", $"{EditorUtility.FormatBytes(totalSize)} - {(double)m_PrevFileSize / totalSize:F2}x smaller");
-            else
-                GUILayout.Space(EditorGUIUtility.singleLineHeight);
-
-
-            EditorGUILayout.Space();
-            GUILayout.BeginHorizontal();
-            GUILayout.Space(30);
-            if (GUILayout.Button("Create Asset"))
-            {
-                CreateAsset();
-            }
-            GUILayout.Space(30);
-            GUILayout.EndHorizontal();
-
-            if (!string.IsNullOrWhiteSpace(m_ErrorMessage))
-            {
-                EditorGUILayout.HelpBox(m_ErrorMessage, MessageType.Error);
-            }
         }
 
         void ApplyQualityLevel()
@@ -296,116 +186,6 @@ namespace GaussianSplatting.Editor
             return result;
         }
 
-        private void LoadVerticesFromSceneObject()
-        {
-            if (m_SelectedSceneObject == null)
-            {
-                Debug.LogError("No GameObject selected.");
-                return;
-            }
-
-            MeshFilter meshFilter = m_SelectedSceneObject.GetComponent<MeshFilter>();
-
-            Color[] vertexColors = meshFilter.mesh.colors;
-
-            Debug.Log("No colors found in the MeshFilter component.");
-
-            // Print the vertex colors (for debugging)
-            for (int i = 0; i < vertexColors.Length; i++)
-            {
-                Debug.Log("Vertex " + i + " Color: " + vertexColors[i]);
-            }
-
-            if (meshFilter != null)
-            {
-                m_Vertices = new List<Vector3>(meshFilter.sharedMesh.vertices);
-                Debug.Log($"Loaded {m_Vertices.Count} vertices, {meshFilter.sharedMesh.triangles.Length} triangles from scene object.");
-
-                DebugMeshTriangles(meshFilter.sharedMesh.vertices, meshFilter.sharedMesh.triangles);
-            }
-            else
-            {
-                Debug.LogError("Selected GameObject does not have a MeshFilter component.");
-            }
-        }
-
-        private static GameObject CreateGameObjectFromPly(string filePath, GameObject targetObject)
-        {
-            if (targetObject == null)
-            {
-                Debug.LogError("Target GameObject is null. Ensure it exists before calling this function.");
-                return null;
-            }
-
-
-            if (!File.Exists(filePath))
-            {
-                Debug.LogError("PLY file not found at: " + filePath);
-                return null;
-            }
-
-            PlyResult ply = PlyHandler.GetVerticesAndTriangles(filePath);
-
-            if (ply.Vertices == null || ply.Vertices.Count == 0 || ply.Triangles == null || ply.Triangles.Count == 0)
-            {
-                Debug.LogError("PLY file contains no valid mesh data.");
-                return null;
-            }
-
-            MeshFilter meshFilter = targetObject.GetComponent<MeshFilter>();
-            if (meshFilter != null && meshFilter.sharedMesh != null)
-            {
-                if (meshFilter.sharedMesh != null)
-                {
-
-                    UnityEngine.Object.DestroyImmediate(meshFilter.sharedMesh);
-
-                }
-
-            }
-            else
-            {
-                meshFilter = targetObject.AddComponent<MeshFilter>(); // Add if missing
-            }
-
-            // Create new mesh
-            Mesh mesh = new Mesh
-            {
-                vertices = ply.Vertices.ToArray(),
-                triangles = ply.Triangles.ToArray()
-
-
-            };
-            // Get the first triangle's vertices
-            Vector3 v1 = mesh.vertices[mesh.triangles[0]];
-            Vector3 v2 = mesh.vertices[mesh.triangles[1]];
-            Vector3 v3 = mesh.vertices[mesh.triangles[2]];
-
-
-
-            Debug.Log($"First face vertices from asset creator:\n{v1}\n{v2}\n{v3}");
-
-            Vector3 v4 = mesh.vertices[mesh.triangles[3]];
-            Vector3 v5 = mesh.vertices[mesh.triangles[4]];
-            Vector3 v6 = mesh.vertices[mesh.triangles[5]];
-
-            Debug.Log($"Second face vertices from asset creator:\n{v4}\n{v5}\n{v6}");
-            mesh.RecalculateNormals(); // Update normals
-
-            meshFilter.sharedMesh = mesh; // Assign new mesh
-
-            MeshRenderer meshRenderer = targetObject.GetComponent<MeshRenderer>();
-            if (meshRenderer == null)
-            {
-                meshRenderer = targetObject.AddComponent<MeshRenderer>(); // Add if missing
-            }
-
-            //
-            meshRenderer.material = new Material(Shader.Find("Standard"));
-
-            return targetObject;
-        }
-
         public static NativeArray<InputSplatData> ReplaceSplatData(NativeArray<InputSplatData> inputSplats, NativeArray<InputSplatData> inputSplatsWithColors, Allocator allocator = Allocator.Persistent)
         {
             int length = inputSplats.Length;
@@ -442,31 +222,6 @@ namespace GaussianSplatting.Editor
             }
 
             return newSplats;
-        }
-
-        private void InitializeTrimeshFaceMapping(string jsonFilePath)
-        {
-            if (string.IsNullOrEmpty(jsonFilePath) || !File.Exists(jsonFilePath))
-            {
-                Debug.LogError("JSON file path is invalid or file does not exist.");
-                return;
-            }
-
-            // Read the JSON file
-            string jsonContent = File.ReadAllText(jsonFilePath);
-
-            // Parse the JSON into the TrimeshMapping object
-            var trimeshMapping = JSONParser.FromJson<Dictionary<string, int>>(jsonContent);
-
-            if (trimeshMapping == null)
-            {
-                Debug.LogError("Failed to parse JSON file or faceMappings is null.");
-                return;
-            }
-
-            // Populate the trimeshFaceMapping dictionary
-            trimeshFaceMapping = trimeshMapping;
-            Debug.Log("Trimesh face mapping initialized successfully.");
         }
 
         string GetFaceKey(Vector3 v0, Vector3 v1, Vector3 v2)
@@ -520,38 +275,7 @@ namespace GaussianSplatting.Editor
             return rounded.ToString(format);
         }
 
-        // Function to calculate the cosine of angles and generate face keys
-        private void DebugMeshTriangles(Vector3[] vertices, int[] triangles)
-        {
-            int foundCount = 0;
-            int totalFaces = triangles.Length / 3;
 
-            for (int i = 0; i < totalFaces; i++)
-            {
-                // Extract the vertices of the current triangle
-                int baseIndex = i * 3;
-                Vector3 v0 = vertices[triangles[baseIndex]];
-                Vector3 v1 = vertices[triangles[baseIndex + 1]];
-                Vector3 v2 = vertices[triangles[baseIndex + 2]];
-
-                // Generate the face key
-                string faceKey = GetFaceKey(v0, v1, v2);
-
-                // Check if the face key exists in the mapping
-                if (trimeshFaceMapping.TryGetValue(faceKey, out int trimeshOrder))
-                {
-                    foundCount++;
-                    Debug.Log($"  Unity Face {i} maps to trimesh order index: {trimeshOrder}");
-                }
-                else
-                {
-                    Debug.LogWarning($"  Unity Face {i} not found in mapping. Key: {faceKey}");
-                }
-            }
-
-            // Log the summary of the mapping
-            Debug.Log($"Debug Mapping Summary: Total Faces = {totalFaces}, Found = {foundCount}, Missing = {totalFaces - foundCount}");
-        }
         unsafe (List<List<List<float>>> alphas, List<List<float>> scales) LoadModelParams(string modelParamsPath)
         {
             string json = File.ReadAllText(modelParamsPath);
@@ -579,7 +303,9 @@ namespace GaussianSplatting.Editor
             return (modelParams._alpha, modelParams._scale);
         }
 
-        unsafe void CreateAsset()
+
+
+        unsafe void CreateGaMeSAsset()
         {
             m_ErrorMessage = null;
             if (string.IsNullOrWhiteSpace(m_InputFile))
@@ -605,26 +331,19 @@ namespace GaussianSplatting.Editor
             GaussianSplatAsset.CameraInfo[] cameras = LoadJsonCamerasFile(m_InputPointCloudFile, m_ImportCameras);
 
             //create object
-            // var gameObject = CreateGameObjectFromPly(m_InputFile, m_SelectedSceneObject);
+            //var gameObject = CreateGameObjectFromPly(m_InputFile, m_SelectedSceneObject);
             var gameObject = m_SelectedSceneObject;
             var (alphas, scales) = LoadModelParams(m_InputJsonFile);
 
             var normalizedAlpha = NormalizeAlphas(alphas);
 
-            Debug.Log($"Finished generating colors. Total colors created: {normalizedAlpha.Count} vs {normalizedAlpha[0].Count} vs {normalizedAlpha[0][0].Count} ");
-
             using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(normalizedAlpha, scales, gameObject, 9);
+            //We need to linearize our splats before ReplaceSplatData because LoadInputSplatFile do that
 
-            using NativeArray<InputSplatData> inputSplatsColored = LoadInputSplatFile(m_InputPointCloudFile);
+
+            using NativeArray<InputSplatData> inputSplatsColored = LoadPLYSplatFile(m_InputPointCloudFile);
 
             using NativeArray<InputSplatData> inputSplatsWithColors = ReplaceSplatData(inputSplats, inputSplatsColored);
-
-            Debug.Log($"InputSplat count {inputSplats.Length}");
-
-            Debug.Log($"InputSplatWithColors count {inputSplatsWithColors.Length}");
-
-            Debug.Log($"First Splat Position from Create asset: {inputSplatsWithColors[0].scale} {GaussianUtils.LinearScale(inputSplatsWithColors[0].scale)}");
-
 
 
             if (inputSplatsWithColors.Length == 0)
@@ -645,8 +364,6 @@ namespace GaussianSplatting.Editor
             EditorUtility.DisplayProgressBar(kProgressTitle, "Morton reordering", 0.05f);
             ReorderMorton(inputSplatsWithColors, boundsMin, boundsMax);
 
-            DebugInputSplats(inputSplatsWithColors);
-            // cluster SHs
             NativeArray<int> splatSHIndices = default;
             NativeArray<GaussianSplatAsset.SHTableItemFloat16> clusteredSHs = default;
             if (m_FormatSH >= GaussianSplatAsset.SHFormat.Cluster64k)
@@ -671,8 +388,8 @@ namespace GaussianSplatting.Editor
             string pathOther = $"{m_OutputFolder}/{baseName}_oth.bytes";
             string pathCol = $"{m_OutputFolder}/{baseName}_col.bytes";
             string pathSh = $"{m_OutputFolder}/{baseName}_shs.bytes";
-            //TODO: without LinearizeData(inputSplatsWithColors);
             LinearizeData(inputSplatsWithColors);
+
 
             // if we are using full lossless (FP32) data, then do not use any chunking, and keep data as-is
             bool useChunks = isUsingChunks;
@@ -702,6 +419,138 @@ namespace GaussianSplatting.Editor
                 AssetDatabase.LoadAssetAtPath<TextAsset>(pathOther),
                 AssetDatabase.LoadAssetAtPath<TextAsset>(pathCol),
                 AssetDatabase.LoadAssetAtPath<TextAsset>(pathSh), AssetDatabase.LoadAssetAtPath<TextAsset>(pathAlpha), AssetDatabase.LoadAssetAtPath<TextAsset>(pathScale));
+
+            var assetPath = $"{m_OutputFolder}/{baseName}.asset";
+            var savedAsset = CreateOrReplaceAsset(asset, assetPath);
+
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Saving assets", 0.99f);
+            AssetDatabase.SaveAssets();
+            EditorUtility.ClearProgressBar();
+
+            Selection.activeObject = savedAsset;
+        }
+
+        unsafe NativeArray<InputSplatData> LoadPLYSplatFile(string plyPath)
+        {
+            NativeArray<InputSplatData> data = default;
+            if (!File.Exists(plyPath))
+            {
+                m_ErrorMessage = $"Did not find {plyPath} file";
+                return data;
+            }
+
+            int splatCount;
+            int vertexStride;
+            NativeArray<byte> verticesRawData;
+            try
+            {
+                PLYFileReader.ReadFile(plyPath, out splatCount, out vertexStride, out _, out verticesRawData);
+            }
+            catch (Exception ex)
+            {
+                m_ErrorMessage = ex.Message;
+                return data;
+            }
+
+            if (UnsafeUtility.SizeOf<InputSplatData>() != vertexStride)
+            {
+                m_ErrorMessage = $"PLY vertex size mismatch, expected {UnsafeUtility.SizeOf<InputSplatData>()} but file has {vertexStride}";
+                return data;
+            }
+
+            // reorder SHs
+            NativeArray<float> floatData = verticesRawData.Reinterpret<float>(1);
+            ReorderSHs(splatCount, (float*)floatData.GetUnsafePtr());
+
+            return verticesRawData.Reinterpret<InputSplatData>(1);
+        }
+
+
+
+        unsafe void CreateAsset()
+        {
+            m_ErrorMessage = null;
+            if (string.IsNullOrWhiteSpace(m_InputFile))
+            {
+                m_ErrorMessage = $"Select input PLY file";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(m_OutputFolder) || !m_OutputFolder.StartsWith("Assets/"))
+            {
+                m_ErrorMessage = $"Output folder must be within project, was '{m_OutputFolder}'";
+                return;
+            }
+            Directory.CreateDirectory(m_OutputFolder);
+
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Reading data files", 0.0f);
+            GaussianSplatAsset.CameraInfo[] cameras = LoadJsonCamerasFile(m_InputFile, m_ImportCameras);
+            using NativeArray<InputSplatData> inputSplats = LoadInputSplatFile(m_InputFile);
+            if (inputSplats.Length == 0)
+            {
+                EditorUtility.ClearProgressBar();
+                return;
+            }
+
+            float3 boundsMin, boundsMax;
+            var boundsJob = new CalcBoundsJob
+            {
+                m_BoundsMin = &boundsMin,
+                m_BoundsMax = &boundsMax,
+                m_SplatData = inputSplats
+            };
+            boundsJob.Schedule().Complete();
+
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Morton reordering", 0.05f);
+            ReorderMorton(inputSplats, boundsMin, boundsMax);
+
+            // cluster SHs
+            NativeArray<int> splatSHIndices = default;
+            NativeArray<GaussianSplatAsset.SHTableItemFloat16> clusteredSHs = default;
+            if (m_FormatSH >= GaussianSplatAsset.SHFormat.Cluster64k)
+            {
+                EditorUtility.DisplayProgressBar(kProgressTitle, "Cluster SHs", 0.2f);
+                ClusterSHs(inputSplats, m_FormatSH, out clusteredSHs, out splatSHIndices);
+            }
+
+            string baseName = Path.GetFileNameWithoutExtension(FilePickerControl.PathToDisplayString(m_InputFile));
+
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Creating data objects", 0.7f);
+            GaussianSplatAsset asset = ScriptableObject.CreateInstance<GaussianSplatAsset>();
+            asset.Initialize(inputSplats.Length, m_FormatPos, m_FormatScale, m_FormatColor, m_FormatSH, boundsMin, boundsMax, cameras, m_InputFile);
+            asset.name = baseName;
+
+            var dataHash = new Hash128((uint)asset.splatCount, (uint)asset.formatVersion, 0, 0);
+            string pathChunk = $"{m_OutputFolder}/{baseName}_chk.bytes";
+            string pathPos = $"{m_OutputFolder}/{baseName}_pos.bytes";
+            string pathOther = $"{m_OutputFolder}/{baseName}_oth.bytes";
+            string pathCol = $"{m_OutputFolder}/{baseName}_col.bytes";
+            string pathSh = $"{m_OutputFolder}/{baseName}_shs.bytes";
+
+            // if we are using full lossless (FP32) data, then do not use any chunking, and keep data as-is
+            bool useChunks = isUsingChunks;
+            if (useChunks)
+                CreateChunkData(inputSplats, pathChunk, ref dataHash);
+            CreatePositionsData(inputSplats, pathPos, ref dataHash);
+            CreateOtherData(inputSplats, pathOther, ref dataHash, splatSHIndices);
+            CreateColorData(inputSplats, pathCol, ref dataHash);
+            CreateSHData(inputSplats, pathSh, ref dataHash, clusteredSHs);
+            asset.SetDataHash(dataHash);
+
+            splatSHIndices.Dispose();
+            clusteredSHs.Dispose();
+
+            // files are created, import them so we can get to the imported objects, ugh
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Initial texture import", 0.85f);
+            AssetDatabase.Refresh(ImportAssetOptions.ForceUncompressedImport);
+
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Setup data onto asset", 0.95f);
+            asset.SetAssetFiles(
+                useChunks ? AssetDatabase.LoadAssetAtPath<TextAsset>(pathChunk) : null,
+                AssetDatabase.LoadAssetAtPath<TextAsset>(pathPos),
+                AssetDatabase.LoadAssetAtPath<TextAsset>(pathOther),
+                AssetDatabase.LoadAssetAtPath<TextAsset>(pathCol),
+                AssetDatabase.LoadAssetAtPath<TextAsset>(pathSh));
 
             var assetPath = $"{m_OutputFolder}/{baseName}.asset";
             var savedAsset = CreateOrReplaceAsset(asset, assetPath);
@@ -810,8 +659,6 @@ namespace GaussianSplatting.Editor
             }
         }
 
-
-
         NativeArray<InputSplatData> LoadInputSplatFile(string filePath)
         {
             NativeArray<InputSplatData> data = default;
@@ -871,68 +718,6 @@ namespace GaussianSplatting.Editor
             return normals;
         }
 
-
-        public static Vector3[] GetMeshVerticesCosinus(GameObject gameObject)
-        {
-            MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
-            if (meshFilter == null)
-            {
-                Debug.LogError("No MeshFilter component found on the GameObject.");
-                return null;
-            }
-
-            Mesh mesh = meshFilter.sharedMesh;
-            if (mesh == null)
-            {
-                Debug.LogError("No mesh found in the MeshFilter component.");
-                return null;
-            }
-
-            // Get the original vertices and triangles
-            Vector3[] vertices = mesh.vertices;
-            int[] triangles = mesh.triangles;
-
-            // Ensure there are at least 3 vertices and 1 triangle
-            if (vertices.Length < 3 || triangles.Length < 3)
-            {
-                Debug.LogError("Mesh does not have enough vertices or triangles.");
-                return null;
-            }
-
-            // Get the indices of the first triangle
-            int v0Index = triangles[3];
-            int v1Index = triangles[4];
-            int v2Index = triangles[5];
-
-            // Get the vertices of the first triangle
-            Vector3 v0 = vertices[v0Index];
-            Vector3 v1 = vertices[v1Index];
-            Vector3 v2 = vertices[v2Index];
-
-            // Compute the edge vectors
-            Vector3 edge0 = v1 - v0;
-            Vector3 edge1 = v2 - v0;
-            Vector3 edge2 = v2 - v1;
-
-            // Normalize the edge vectors
-            Vector3 edge0Normalized = edge0.normalized;
-            Vector3 edge1Normalized = edge1.normalized;
-            Vector3 edge2Normalized = edge2.normalized;
-
-            // Calculate the cosines of the angles using the dot product
-            float cosAngle0 = Vector3.Dot(edge0Normalized, edge1Normalized);
-            float cosAngle1 = Vector3.Dot(-edge0Normalized, edge2Normalized);
-            float cosAngle2 = Vector3.Dot(-edge1Normalized, -edge2Normalized);
-
-            // Print the cosines of the angles
-            Debug.Log($"Cosine of angle at v0: {cosAngle0}");
-            Debug.Log($"Cosine of angle at v1: {cosAngle1}");
-            Debug.Log($"Cosine of angle at v2: {cosAngle2}");
-
-            // Return the vertices of the first triangle (optional)
-            return new Vector3[] { v0, v1, v2 };
-        }
-
         public static List<Vector3> GetMeshFaceVertices(GameObject gameObject)
         {
             MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
@@ -984,10 +769,6 @@ namespace GaussianSplatting.Editor
                     -vertices[i].z,
                 vertices[i].y
                 );
-
-
-
-
             }
 
             return transformedVertices;
@@ -1006,9 +787,6 @@ namespace GaussianSplatting.Editor
                 Vector3 v0 = vertices[i * 3];
                 Vector3 v1 = vertices[i * 3 + 1];
                 Vector3 v2 = vertices[i * 3 + 2];
-
-
-
 
                 var triangleAphas = normalizedAlphas[i];
 
@@ -1067,7 +845,6 @@ namespace GaussianSplatting.Editor
         {
             return math.max(0, x);// x < 0 ? 0 : x;
         }
-
 
 
         unsafe (List<Quaternion> rotations, List<Vector3> scalings) GenerateRotationsAndScales(List<Vector3> vertices, List<List<float>> scales, int numPtsEachTriangle)
@@ -1133,53 +910,6 @@ namespace GaussianSplatting.Editor
         {
             return Vector3.Dot(v, u) * u;
         }
-
-        unsafe (List<Quaternion> rotations, List<Vector3> scalings) GenerateRotationsAndScalesV2(List<Vector3> vertices, List<List<float>> scales, int numPtsEachTriangle)
-        {
-            int numTriangles = vertices.Count / 3;
-            float eps_s0 = 1e-8f;
-            List<Quaternion> rotations = new List<Quaternion>(numTriangles * numPtsEachTriangle);
-            List<Vector3> scalings = new List<Vector3>(numTriangles * numPtsEachTriangle);
-
-            for (int i = 0; i < numTriangles; i++)
-            {
-                // Extract the three vertices of the current triangle
-                Vector3 va = vertices[i * 3];
-                Vector3 vb = vertices[i * 3 + 1];
-                Vector3 vc = vertices[i * 3 + 2];
-
-                Vector3 normal = Vector3.Cross(vb - va, vc - va);
-                Vector3 v0 = normal / (normal.magnitude + eps_s0);
-                Vector3 mean = (va + vb + vc) / 3.0f;
-                Vector3 v1 = vb - mean;
-                var v1_norm = (v1.magnitude + eps_s0);
-                v1 = v1 / v1_norm;
-                var v2_init = vb - mean;
-                Vector3 v2 = (v2_init - ProjectOnto(v2_init, v0) - ProjectOnto(v2_init, v1));
-                v2 = v2 / (v2.magnitude + eps_s0);
-
-                float s1 = v1_norm / 2.0f;
-                float s2 = Vector3.Dot(v2_init, v2) / 2.0f;
-                float s0 = eps_s0;
-
-
-
-                for (int j = 0; j < numPtsEachTriangle; j++)
-                {
-                    List<float> scaleFactor = scales[i * 5 + j];
-                    float x = math.log(ReLU(scaleFactor[0] * s0) + eps_s0);
-                    float y = math.log(ReLU(scaleFactor[0] * s1) + eps_s0);
-                    float z = math.log(ReLU(scaleFactor[0] * s2) + eps_s0);
-                    scalings.Add(new Vector3(x, y, z));
-
-
-                }
-
-            }
-            return (rotations, scalings);
-        }
-
-
 
         private static List<Vector3> RGB2SH(List<Vector3> rgbs)
         {
@@ -1289,17 +1019,18 @@ namespace GaussianSplatting.Editor
         }
 
 
-
         unsafe NativeArray<InputSplatData> CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, GameObject gameObject, int maxShDegree)
         {
             int numOfSplatsPerFace = alphas[0][0].Count;
+
             var faceVertices = GetMeshFaceVertices(gameObject);
+            Debug.Log($"First Splat rotation from CreateSplatDataFromMemory: {alphas.Count} {faceVertices.Count}");
             List<Vector3> positions = CalculateXYZ(faceVertices, numOfSplatsPerFace, alphas);
             List<Vector3> normals = GenerateNormals(positions.Count);
             List<Vector3> colors = SH2RGB(GenerateRandomColors(positions.Count));
             List<List<float[]>> features = CreateFeatures(colors, maxShDegree);
             var (rotations, scalings) = GenerateRotationsAndScales(faceVertices, scales, numOfSplatsPerFace);
-            Debug.Log($"First Splat rotation from CreateSplatDataFromMemory: {alphas[0].Count}");
+
 
 
             NativeArray<InputSplatData> data = new NativeArray<InputSplatData>(positions.Count, Allocator.Persistent);
@@ -1337,41 +1068,6 @@ namespace GaussianSplatting.Editor
 
             return data;
 
-        }
-
-        unsafe NativeArray<InputSplatData> LoadPLYSplatFile(string plyPath)
-        {
-            NativeArray<InputSplatData> data = default;
-            if (!File.Exists(plyPath))
-            {
-                m_ErrorMessage = $"Did not find {plyPath} file";
-                return data;
-            }
-
-            int splatCount;
-            int vertexStride;
-            NativeArray<byte> verticesRawData;
-            try
-            {
-                PLYFileReader.ReadFile(plyPath, out splatCount, out vertexStride, out _, out verticesRawData);
-            }
-            catch (Exception ex)
-            {
-                m_ErrorMessage = ex.Message;
-                return data;
-            }
-
-            if (UnsafeUtility.SizeOf<InputSplatData>() != vertexStride)
-            {
-                m_ErrorMessage = $"PLY vertex size mismatch, expected {UnsafeUtility.SizeOf<InputSplatData>()} but file has {vertexStride}";
-                return data;
-            }
-
-            // reorder SHs
-            NativeArray<float> floatData = verticesRawData.Reinterpret<float>(1);
-            ReorderSHs(splatCount, (float*)floatData.GetUnsafePtr());
-
-            return verticesRawData.Reinterpret<InputSplatData>(1);
         }
 
         [BurstCompile]
@@ -2197,6 +1893,195 @@ namespace GaussianSplatting.Editor
             return result;
         }
 
+        #region GUI Helper Methods
+
+        private void DrawModeSelector()
+        {
+            EditorGUILayout.Space();
+            GUILayout.Label("Mode Selection", EditorStyles.boldLabel);
+            m_SelectedMode = (InputMode)EditorGUILayout.EnumPopup("Processing Mode", m_SelectedMode);
+            EditorGUILayout.Space();
+        }
+
+        private void DrawStandardInputGUI()
+        {
+            GUILayout.Label("Input Data", EditorStyles.boldLabel);
+            var rect = EditorGUILayout.GetControlRect(true);
+            m_InputFile = m_FilePicker.PathFieldGUI(rect, new GUIContent("Input PLY File"), m_InputFile, "ply", "PointCloudFile");
+
+            m_ImportCameras = EditorGUILayout.Toggle("Import Cameras", m_ImportCameras);
+
+            // Update file info when the path changes
+            if (m_InputFile != m_PrevPlyPath && !string.IsNullOrWhiteSpace(m_InputFile))
+            {
+                // Use the correct reader for this mode
+                PLYFileReader.ReadFileHeader(m_InputFile, out m_PrevVertexCount, out var _, out var _);
+                m_PrevFileSize = File.Exists(m_InputFile) ? new FileInfo(m_InputFile).Length : 0;
+                m_PrevPlyPath = m_InputFile;
+            }
+
+            DrawFileInfo();
+        }
+
+        private void DrawFileInfo()
+        {
+            if (m_PrevVertexCount > 0)
+                EditorGUILayout.LabelField("File Size", $"{EditorUtility.FormatBytes(m_PrevFileSize)} - {m_PrevVertexCount:N0} splats");
+            else
+                GUILayout.Space(EditorGUIUtility.singleLineHeight);
+        }
+
+        private void DrawGaMeSInputGUI()
+        {
+            GUILayout.Label("Input Data", EditorStyles.boldLabel);
+
+            // Mesh PLY file
+            var rectMesh = EditorGUILayout.GetControlRect(true);
+            m_InputFile = m_FilePicker.PathFieldGUI(rectMesh, new GUIContent("Input Mesh PLY File"), m_InputFile, "ply", "PointCloudFile");
+
+            // Point Cloud PLY file
+            var rectCloud = EditorGUILayout.GetControlRect(true);
+            m_InputPointCloudFile = m_FilePicker.PathFieldGUI(rectCloud, new GUIContent("Input Point Cloud PLY File"), m_InputPointCloudFile, "ply", "PointCloudFile");
+
+            // JSON params file
+            m_InputJsonFile = EditorGUILayout.TextField("Input JSON Params File", m_InputJsonFile);
+            if (GUILayout.Button("Browse for JSON File..."))
+            {
+                string path = EditorUtility.OpenFilePanel("Select JSON File", "", "json");
+                if (!string.IsNullOrEmpty(path))
+                {
+                    m_InputJsonFile = path;
+                }
+            }
+
+            // Scene object
+            m_SelectedSceneObject = (GameObject)EditorGUILayout.ObjectField("Scene Object", m_SelectedSceneObject, typeof(GameObject), true);
+
+            GUILayout.Label("Preprocessing", EditorStyles.boldLabel);
+            m_ImportCameras = EditorGUILayout.Toggle("Import Cameras", m_ImportCameras);
+
+            // Update file info based on the POINT CLOUD file
+            if (m_InputPointCloudFile != m_PrevPlyPath && !string.IsNullOrWhiteSpace(m_InputPointCloudFile))
+            {
+                m_PrevVertexCount = 0;
+                m_ErrorMessage = null;
+                try
+                {
+                    m_PrevVertexCount = GaussianFileReader.ReadFileHeader(m_InputPointCloudFile);
+                    m_PrevFileSize = File.Exists(m_InputPointCloudFile) ? new FileInfo(m_InputPointCloudFile).Length : 0;
+                }
+                catch (Exception ex)
+                {
+                    m_ErrorMessage = ex.Message;
+                }
+                m_PrevPlyPath = m_InputPointCloudFile;
+            }
+
+            DrawFileInfo();
+        }
+
+        private void DrawCommonOutputGUI()
+        {
+            EditorGUILayout.Space();
+            GUILayout.Label("Output Settings", EditorStyles.boldLabel);
+
+            // Output Folder
+            var rectOut = EditorGUILayout.GetControlRect(true);
+            string newOutputFolder = m_FilePicker.PathFieldGUI(rectOut, new GUIContent("Output Folder"), m_OutputFolder, null, "GaussianAssetOutputFolder");
+            if (newOutputFolder != m_OutputFolder)
+            {
+                m_OutputFolder = newOutputFolder;
+                EditorPrefs.SetString(kPrefOutputFolder, m_OutputFolder);
+            }
+
+            // Quality Dropdown
+            var newQuality = (DataQuality)EditorGUILayout.EnumPopup("Quality", m_Quality);
+            if (newQuality != m_Quality)
+            {
+                m_Quality = newQuality;
+                EditorPrefs.SetInt(kPrefQuality, (int)m_Quality);
+                ApplyQualityLevel();
+            }
+
+            // Calculate sizes
+            long sizePos = 0, sizeOther = 0, sizeCol = 0, sizeSHs = 0, totalSize = 0;
+            if (m_PrevVertexCount > 0)
+            {
+                sizePos = GaussianSplatAsset.CalcPosDataSize(m_PrevVertexCount, m_FormatPos);
+                sizeOther = GaussianSplatAsset.CalcOtherDataSize(m_PrevVertexCount, m_FormatScale);
+                sizeCol = GaussianSplatAsset.CalcColorDataSize(m_PrevVertexCount, m_FormatColor);
+                sizeSHs = GaussianSplatAsset.CalcSHDataSize(m_PrevVertexCount, m_FormatSH);
+                long sizeChunk = isUsingChunks ? GaussianSplatAsset.CalcChunkDataSize(m_PrevVertexCount) : 0;
+                totalSize = sizePos + sizeOther + sizeCol + sizeSHs + sizeChunk;
+            }
+
+            // Detailed Format Settings
+            const float kSizeColWidth = 70;
+            EditorGUI.BeginDisabledGroup(m_Quality != DataQuality.Custom);
+            EditorGUI.indentLevel++;
+            DrawFormatPopup("Position", ref m_FormatPos, sizePos, kSizeColWidth);
+            DrawFormatPopup("Scale", ref m_FormatScale, sizeOther, kSizeColWidth);
+            DrawFormatPopup("Color", ref m_FormatColor, sizeCol, kSizeColWidth);
+            DrawFormatPopup("SH", ref m_FormatSH, sizeSHs, kSizeColWidth);
+            EditorGUI.indentLevel--;
+            EditorGUI.EndDisabledGroup();
+
+            if (totalSize > 0)
+                EditorGUILayout.LabelField("Estimated Asset Size", $"{EditorUtility.FormatBytes(totalSize)} - {(double)m_PrevFileSize / totalSize:F2}x smaller");
+            else
+                GUILayout.Space(EditorGUIUtility.singleLineHeight);
+        }
+
+        // A small helper to reduce duplication in the format popups
+        private void DrawFormatPopup<T>(string label, ref T format, long size, float labelWidth) where T : Enum
+        {
+            GUILayout.BeginHorizontal();
+            format = (T)(object)EditorGUILayout.EnumPopup(label, format);
+
+            GUIContent sizeContent = new GUIContent(size > 0 ? EditorUtility.FormatBytes(size) : string.Empty);
+
+            // Special case for SH clustering warning
+            if (format is GaussianSplatAsset.SHFormat shFormat && shFormat >= GaussianSplatAsset.SHFormat.Cluster64k)
+            {
+                sizeContent.tooltip = "Note that SH clustering is not fast! (3-10 minutes for 6M splats)";
+                sizeContent.image = EditorGUIUtility.IconContent("console.warnicon.sml").image;
+            }
+
+            GUILayout.Label(sizeContent, GUILayout.Width(labelWidth));
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawCreateButtonAndError()
+        {
+            EditorGUILayout.Space();
+            GUILayout.BeginHorizontal();
+            GUILayout.Space(30);
+
+            if (GUILayout.Button("Create Asset"))
+            {
+
+                if (m_SelectedMode == InputMode.GaussianSplatting)
+                {
+                    CreateAsset();
+                }
+                else
+                {
+                    CreateGaMeSAsset();
+                }
+            }
+
+            GUILayout.Space(30);
+            GUILayout.EndHorizontal();
+
+            // Display error message if it exists
+            if (!string.IsNullOrWhiteSpace(m_ErrorMessage))
+            {
+                EditorGUILayout.HelpBox(m_ErrorMessage, MessageType.Error);
+            }
+        }
+
+        #endregion
+
         [Serializable]
         public class JsonCamera
         {
@@ -2216,5 +2101,117 @@ namespace GaussianSplatting.Editor
             public List<List<float>> _scale { get; set; }
         }
 
+        private void LoadVerticesFromSceneObject()
+        {
+            if (m_SelectedSceneObject == null)
+            {
+                Debug.LogError("No GameObject selected.");
+                return;
+            }
+
+            MeshFilter meshFilter = m_SelectedSceneObject.GetComponent<MeshFilter>();
+
+            Color[] vertexColors = meshFilter.mesh.colors;
+
+            Debug.Log("No colors found in the MeshFilter component.");
+
+            // Print the vertex colors (for debugging)
+            for (int i = 0; i < vertexColors.Length; i++)
+            {
+                Debug.Log("Vertex " + i + " Color: " + vertexColors[i]);
+            }
+
+            if (meshFilter != null)
+            {
+                m_Vertices = new List<Vector3>(meshFilter.sharedMesh.vertices);
+                Debug.Log($"Loaded {m_Vertices.Count} vertices, {meshFilter.sharedMesh.triangles.Length} triangles from scene object.");
+            }
+            else
+            {
+                Debug.LogError("Selected GameObject does not have a MeshFilter component.");
+            }
+        }
+
+        private static GameObject CreateGameObjectFromPly(string filePath, GameObject targetObject)
+        {
+            if (targetObject == null)
+            {
+                Debug.LogError("Target GameObject is null. Ensure it exists before calling this function.");
+                return null;
+            }
+
+
+            if (!File.Exists(filePath))
+            {
+                Debug.LogError("PLY file not found at: " + filePath);
+                return null;
+            }
+
+            PlyResult ply = PlyHandler.GetVerticesAndTriangles(filePath);
+
+            if (ply.Vertices == null || ply.Vertices.Count == 0 || ply.Triangles == null || ply.Triangles.Count == 0)
+            {
+                Debug.LogError("PLY file contains no valid mesh data.");
+                return null;
+            }
+
+            MeshFilter meshFilter = targetObject.GetComponent<MeshFilter>();
+            if (meshFilter != null && meshFilter.sharedMesh != null)
+            {
+                if (meshFilter.sharedMesh != null)
+                {
+
+                    UnityEngine.Object.DestroyImmediate(meshFilter.sharedMesh);
+
+                }
+
+            }
+            else
+            {
+                meshFilter = targetObject.AddComponent<MeshFilter>(); // Add if missing
+            }
+
+            // Create new mesh
+            Mesh mesh = new Mesh
+            {
+                vertices = ply.Vertices.ToArray(),
+                triangles = ply.Triangles.ToArray()
+
+
+            };
+            // Get the first triangle's vertices
+            Vector3 v1 = mesh.vertices[mesh.triangles[0]];
+            Vector3 v2 = mesh.vertices[mesh.triangles[1]];
+            Vector3 v3 = mesh.vertices[mesh.triangles[2]];
+
+
+
+            Debug.Log($"First face vertices from asset creator:\n{v1}\n{v2}\n{v3}");
+
+            Vector3 v4 = mesh.vertices[mesh.triangles[3]];
+            Vector3 v5 = mesh.vertices[mesh.triangles[4]];
+            Vector3 v6 = mesh.vertices[mesh.triangles[5]];
+
+            Debug.Log($"Second face vertices from asset creator:\n{v4}\n{v5}\n{v6}");
+            mesh.RecalculateNormals(); // Update normals
+
+            meshFilter.sharedMesh = mesh; // Assign new mesh
+
+            MeshRenderer meshRenderer = targetObject.GetComponent<MeshRenderer>();
+            if (meshRenderer == null)
+            {
+                meshRenderer = targetObject.AddComponent<MeshRenderer>(); // Add if missing
+            }
+
+            //
+            meshRenderer.material = new Material(Shader.Find("Standard"));
+
+            return targetObject;
+        }
+
+
+
     }
+
+
 }

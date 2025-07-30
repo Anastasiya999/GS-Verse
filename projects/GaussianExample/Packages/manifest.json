@@ -1,6 +1,11 @@
 {
   "dependencies": {
     "com.unity.ide.rider": "3.0.31",
+    "com.unity.shadergraph": "14.0.11",
+    "com.unity.xr.hands": "1.4.3",
+    "com.unity.xr.interaction.toolkit": "3.0.8",
+    "com.unity.xr.management": "4.5.1",
+    "com.unity.xr.openxr": "1.12.1",
     "org.nesnausk.gaussian-splatting": "file:../../../package",
     "com.unity.modules.ai": "1.0.0",
     "com.unity.modules.androidjni": "1.0.0",

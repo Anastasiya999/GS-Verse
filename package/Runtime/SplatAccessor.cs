@@ -28,9 +28,26 @@ namespace GaussianSplatting.Runtime
         float uniformScale = 1f;
         public float damping = 5f;
 
+        [Range(1f, 500f)]
+        public float stiffness = 100f;
+        public float idleDamping;
+
+
         public int numberPtsPerTriangle = 3;
 
         public GameObject boundingBoxObject;
+
+        [Tooltip("The object that will control the stretch. Moving this object stretches the mesh.")]
+        public Transform target;
+
+        [Tooltip("The local point on the mesh that will remain stationary. (0, -0.5, 0) is the bottom of a default Unity cylinder or cube.")]
+        public Vector3 anchorPoint = new Vector3(0, -0.5f, 0);
+
+        [Tooltip("The axis in local space along which the mesh will stretch.")]
+        public Vector3 stretchAxis = Vector3.up;
+
+        private Vector3 originalTop;
+
 
 
         [HideInInspector]
@@ -138,7 +155,7 @@ namespace GaussianSplatting.Runtime
 
             if (IsSelectionMode())
             {
-                _splatRendererBackground = GameObject.FindGameObjectWithTag("SplatBackground").GetComponent<GaussianSplatRenderer>();
+                // _splatRendererBackground = GameObject.FindGameObjectWithTag("SplatBackground").GetComponent<GaussianSplatRenderer>();
 
                 Transform meshTransform = transform;
                 Bounds bounds = GetWorldBounds(boundingBoxObject);
@@ -236,11 +253,11 @@ namespace GaussianSplatting.Runtime
                 createAssetBgJobHandle.Complete();
                 if (creator != null)
                 {
-                    var newAsset = creator.CreateAsset("new asset background", backgroundInputSplatsData, _splatRenderer.asset.alphaData, _splatRenderer.asset.scaleData, _splatRenderer.asset.pointCloudPath);
-                    _splatRendererBackground.InjectAsset(newAsset);
+                    //  var newAsset = creator.CreateAsset("new asset background", backgroundInputSplatsData, _splatRenderer.asset.alphaData, _splatRenderer.asset.scaleData, _splatRenderer.asset.pointCloudPath);
+                    //  _splatRendererBackground.InjectAsset(newAsset);
                 }
 
-                ConfigureForegroundBackground(_splatRenderer, _splatRendererBackground);
+                // ConfigureForegroundBackground(_splatRenderer, _splatRendererBackground);
 
             }
             else
@@ -267,7 +284,11 @@ namespace GaussianSplatting.Runtime
 
             }
 
+
         }
+
+
+
 
         void Update()
         {
@@ -277,6 +298,7 @@ namespace GaussianSplatting.Runtime
                 if (createAssetJobHandle.IsCompleted)
                 {
                     createAssetJobHandle.Complete();
+
                     CreateAsset();
 
                     // Dispose arrays
@@ -291,13 +313,16 @@ namespace GaussianSplatting.Runtime
             }
 
             frameCount++;
-            var dis = isClicked ? 1f : 0f;
-            bool mouseDown = Input.GetMouseButton(0);
+            var dis = 1f;
+            bool mouseDown = isClicked;
+
             if (mouseDown)
             {
 
                 if (IsSelectionMode())
                 {
+
+
                     var springJob = new VertexSpringJobSelected
                     {
                         deltaTime = Time.deltaTime,
@@ -314,6 +339,7 @@ namespace GaussianSplatting.Runtime
                     };
                     JobHandle handle = springJob.Schedule(selectedVertexIndices.Length, 64);
                     handle.Complete();
+
                 }
                 else
                 {
@@ -562,12 +588,16 @@ namespace GaussianSplatting.Runtime
                 int i = selectedVertexIndices[index];
 
                 float3 velocity = vertexVelocities[i];
-                float3 displacement = (displacedVertices[i] - originalVertices[i]) * uniformScale;
-                velocity -= displacement * springForce * deltaTime;
-                velocity *= 1f - damping * deltaTime;
-                vertexVelocities[i] = velocity;
+                if (velocity.x != 0f && velocity.y != 0f && velocity.z != 0f)
+                {
+                    float3 displacement = (displacedVertices[i] - originalVertices[i]) * uniformScale;
+                    velocity -= displacement * springForce * deltaTime;
+                    velocity *= 1f - damping * deltaTime;
+                    vertexVelocities[i] = velocity;
 
-                displacedVertices[i] += velocity * (deltaTime / uniformScale);
+                    displacedVertices[i] += velocity * (deltaTime / uniformScale);
+                }
+
 
 
             }
@@ -615,17 +645,85 @@ namespace GaussianSplatting.Runtime
             public void Execute(int index)
             {
                 int i = selectedVertexIndices[index];
-                Vector3 pointToVertex = displacedVertices[i] - (float3)pointLocal;
-                pointToVertex *= uniformScale;
+                if (force == Vector3.zero)
+                {
+                    vertexVelocities[i] = Vector3.zero;
+                }
+                else
+                {
+                    Vector3 pointToVertex = displacedVertices[i] - (float3)pointLocal;
+                    pointToVertex *= uniformScale;
 
-                float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
-                Vector3 appliedForce = force * attenuation * deltaTime;
-                vertexVelocities[i] += (float3)appliedForce;
+                    float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
+                    Vector3 appliedForce = force * attenuation * deltaTime;
+                    vertexVelocities[i] += (float3)appliedForce;
+
+                }
 
 
             }
         }
 
+        private const float SLEEPING_THRESHOLD_SQR = 0.0001f * 0.0001f;
+
+        [BurstCompile]
+        struct AddStretchForceJobSelected : IJobParallelFor
+        {
+
+            [NativeDisableParallelForRestriction] public NativeArray<float3> displacedVertices;
+            [NativeDisableParallelForRestriction] public NativeArray<float3> originalVertices;
+            [NativeDisableParallelForRestriction] public NativeArray<float3> vertexVelocities;
+
+            [ReadOnly] public NativeArray<int> selectedVertexIndices;
+            [ReadOnly] public Vector3 currPos;
+            [ReadOnly] public Vector3 prevPos;
+
+            [ReadOnly] public float deltaTime;
+            [ReadOnly] public float damping;
+
+
+
+            public void Execute(int index)
+            {
+                int i = selectedVertexIndices[index];
+                var originalVertex = (float3)originalVertices[i];
+
+
+                //   float stretchFactor = SplatAccessor.CalculateStretchFactor(originalVertex, anchorPoint, originalTop, stretchAxis);
+                var distance = Vector3.Distance(currPos, (Vector3)originalVertex);
+                float t = Mathf.Clamp01(1f - distance / 5.0f);
+                var force = t;
+
+                float influence = SplatAccessor.Falloff(t);
+
+                // Move vertex toward anchor, but influenced by falloff
+                Vector3 direction = (currPos - (Vector3)originalVertex);
+                displacedVertices[i] = originalVertex + (float3)direction * (1f - influence);
+
+            }
+        }
+
+        static float Falloff(float t)
+        {
+            // Example: smoothstep-like falloff
+            return t * t * (3f - 2f * t); // Smoothstep
+        }
+
+        public static float CalculateStretchFactor(Vector3 vertex, Vector3 anchorPoint, Vector3 originalTop, Vector3 stretchAxis)
+        {
+            Vector3 axis = stretchAxis.normalized;
+
+            float vertexDistance = Vector3.Dot(vertex - anchorPoint, axis);
+            float totalDistance = Vector3.Dot(originalTop - anchorPoint, axis);
+
+            if (totalDistance < 0.001f)
+            {
+                return 0;
+            }
+
+
+            return Mathf.Clamp01(vertexDistance / totalDistance);
+        }
 
 
         public void AddDeformingForce(Vector3 point, Vector3 force)
@@ -633,6 +731,10 @@ namespace GaussianSplatting.Runtime
 
 
             Vector3 pointLocal = transform.InverseTransformPoint(point);
+
+            Debug.Log("adding force");
+            Debug.Log(pointLocal);
+
 
             if (IsSelectionMode())
             {
@@ -665,6 +767,37 @@ namespace GaussianSplatting.Runtime
                 JobHandle handle = job.Schedule(displacedVertices.Length, 64);
                 handle.Complete();
             }
+
+
+        }
+
+
+        public void AddStretchingForce(Vector3 currPos, Vector3 prevPos)
+        {
+
+            if (IsSelectionMode())
+            {
+                var job = new AddStretchForceJobSelected
+                {
+                    displacedVertices = displacedVertices,
+                    originalVertices = originalVertices,
+                    vertexVelocities = vertexVelocities,
+                    currPos = currPos,
+                    prevPos = prevPos,
+
+
+                    selectedVertexIndices = selectedVertexIndices,
+
+                    deltaTime = Time.deltaTime,
+                    damping = damping,
+
+
+                };
+
+                JobHandle handle = job.Schedule(selectedVertexIndices.Length, 64);
+                handle.Complete();
+            }
+
 
 
         }
