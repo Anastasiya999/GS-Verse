@@ -23,12 +23,16 @@ namespace GaussianSplatting.Runtime
         [SerializeField] Vector3 m_BoundsMin;
         [SerializeField] Vector3 m_BoundsMax;
         [SerializeField] Hash128 m_DataHash;
+        [SerializeField] string m_ObjPath;
+
 
         public int formatVersion => m_FormatVersion;
         public int splatCount => m_SplatCount;
         public Vector3 boundsMin => m_BoundsMin;
         public Vector3 boundsMax => m_BoundsMax;
         public Hash128 dataHash => m_DataHash;
+
+        public string objPath => m_ObjPath;
 
         public bool isGaMeS_asset => m_AlphaData != null && m_ScaleData != null;
 
@@ -135,6 +139,11 @@ namespace GaussianSplatting.Runtime
         public void SetDataHash(Hash128 hash)
         {
             m_DataHash = hash;
+        }
+
+        public void SetObjPath(string path)
+        {
+            m_ObjPath = path;
         }
 
         public void SetAssetFiles(TextAsset dataChunk, TextAsset dataPos, TextAsset dataOther, TextAsset dataColor, TextAsset dataSh, TextAsset dataAlpha = null, TextAsset dataScale = null)

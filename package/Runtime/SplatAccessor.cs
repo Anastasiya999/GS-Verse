@@ -110,13 +110,20 @@ namespace GaussianSplatting.Runtime
         {
             _splatRenderer = GameObject.FindGameObjectWithTag("SplatRenderer").GetComponent<GaussianSplatRenderer>();
 
-            if (_splatRenderer.asset.alphaData != null)
+            if (_splatRenderer.asset.isGaMeS_asset)
             {
 
                 byte[] fileBytes = _splatRenderer.asset.alphaData.bytes;
                 byte[] fileScaleBytes = _splatRenderer.asset.scaleData.bytes;
                 decodedAlphasNative = DecodeAlphasToNativeFloat3(fileBytes, _splatRenderer.asset.splatCount / numberPtsPerTriangle, numberPtsPerTriangle, Allocator.Persistent);
                 decodedScalesNative = DecodeScalesToNative(fileScaleBytes, _splatRenderer.asset.splatCount, Allocator.Persistent);
+
+                var mesh = Resources.Load<GameObject>(_splatRenderer.asset.objPath).transform.GetChild(0)
+                  .GetComponent<MeshFilter>().sharedMesh;
+
+                Debug.Log(mesh);
+                MeshFilter meshfilter = gameObject.AddComponent<MeshFilter>();
+                meshfilter.mesh = mesh;
 
             }
             else
@@ -156,7 +163,6 @@ namespace GaussianSplatting.Runtime
             if (IsSelectionMode())
             {
                 // _splatRendererBackground = GameObject.FindGameObjectWithTag("SplatBackground").GetComponent<GaussianSplatRenderer>();
-
                 Transform meshTransform = transform;
                 Bounds bounds = GetWorldBounds(boundingBoxObject);
                 HashSet<int> vertexSet = new HashSet<int>();
@@ -164,6 +170,7 @@ namespace GaussianSplatting.Runtime
 
                 List<int> backgroundTriangleIndicesList = new List<int>();
                 HashSet<int> backgroundVertexSet = new HashSet<int>();
+                Debug.Log(bounds);
 
                 for (int i = 0; i < triangles.Length; i += 3)
                 {
@@ -176,7 +183,9 @@ namespace GaussianSplatting.Runtime
                     Vector3 v2 = meshTransform.TransformPoint(originalVertices[i2]);
 
                     // Check if any vertex of the triangle is inside the bounding box
-                    if (bounds.Contains(v0) || bounds.Contains(v1) || bounds.Contains(v2))
+                    if (IsPointInsideOBB(boundingBoxObject.transform, v0) ||
+     IsPointInsideOBB(boundingBoxObject.transform, v1) ||
+     IsPointInsideOBB(boundingBoxObject.transform, v2))
                     {
                         vertexSet.Add(i0);
                         vertexSet.Add(i1);
@@ -285,6 +294,14 @@ namespace GaussianSplatting.Runtime
             }
 
 
+        }
+        bool IsPointInsideOBB(Transform boxTransform, Vector3 point)
+        {
+            Vector3 localPoint = boxTransform.InverseTransformPoint(point);
+            Vector3 halfSize = Vector3.one * 0.5f; // assuming default 1x1x1 cube
+            return Mathf.Abs(localPoint.x) <= halfSize.x &&
+                   Mathf.Abs(localPoint.y) <= halfSize.y &&
+                   Mathf.Abs(localPoint.z) <= halfSize.z;
         }
 
 

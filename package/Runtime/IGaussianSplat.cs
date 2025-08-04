@@ -26,6 +26,10 @@ namespace GaussianSplatting.Runtime
         int formatVersion { get; }
         GaussianSplatAsset.CameraInfo[] cameras { get; }
 
+        bool isGaMeS_asset { get; }
+        string objPath { get; }
+
+
         void Dispose();
     }
 

@@ -207,9 +207,9 @@ namespace GaussianSplatting.Shared
             {
                 int baseIndex = i * 3;
 
-                faceVertices[baseIndex] = TransformVertex(vertices[triangles[baseIndex]]);
-                faceVertices[baseIndex + 1] = TransformVertex(vertices[triangles[baseIndex + 1]]);
-                faceVertices[baseIndex + 2] = TransformVertex(vertices[triangles[baseIndex + 2]]);
+                faceVertices[baseIndex] = vertices[triangles[baseIndex]];
+                faceVertices[baseIndex + 1] = vertices[triangles[baseIndex + 1]];
+                faceVertices[baseIndex + 2] = vertices[triangles[baseIndex + 2]];
             }
 
             return faceVertices;
@@ -228,9 +228,9 @@ namespace GaussianSplatting.Shared
                 int i1 = triangles[baseIdx + 1];
                 int i2 = triangles[baseIdx + 2];
 
-                faceVertices[i * 3 + 0] = TransformVertex(vertices[i0]);
-                faceVertices[i * 3 + 1] = TransformVertex(vertices[i1]);
-                faceVertices[i * 3 + 2] = TransformVertex(vertices[i2]);
+                faceVertices[i * 3 + 0] = (vertices[i0]);
+                faceVertices[i * 3 + 1] = (vertices[i1]);
+                faceVertices[i * 3 + 2] = (vertices[i2]);
             }
 
             return faceVertices;

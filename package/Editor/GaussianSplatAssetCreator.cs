@@ -35,6 +35,7 @@ namespace GaussianSplatting.Editor
         readonly FilePickerControl m_FilePicker = new();
         [SerializeField] string m_InputFile;
         [SerializeField] string m_InputPointCloudFile;
+        [SerializeField] string m_MeshResourcePath;
         [SerializeField] string m_InputJsonFile;
         [SerializeField] GameObject m_SelectedSceneObject;
 
@@ -325,6 +326,13 @@ namespace GaussianSplatting.Editor
                 m_ErrorMessage = $"Output folder must be within project, was '{m_OutputFolder}'";
                 return;
             }
+
+            if (string.IsNullOrWhiteSpace(m_MeshResourcePath))
+            {
+                m_ErrorMessage = $"Provide path obj file";
+                return;
+            }
+
             Directory.CreateDirectory(m_OutputFolder);
 
             EditorUtility.DisplayProgressBar(kProgressTitle, "Reading data files", 0.0f);
@@ -377,9 +385,11 @@ namespace GaussianSplatting.Editor
             EditorUtility.DisplayProgressBar(kProgressTitle, "Creating data objects", 0.7f);
             GaussianSplatAsset asset = ScriptableObject.CreateInstance<GaussianSplatAsset>();
             asset.Initialize(inputSplatsWithColors.Length, m_FormatPos, m_FormatScale, m_FormatColor, m_FormatSH, boundsMin, boundsMax, cameras, m_InputPointCloudFile);
+            asset.SetObjPath(m_MeshResourcePath);
             asset.name = baseName;
 
             var dataHash = new Hash128((uint)asset.splatCount, (uint)asset.formatVersion, 0, 0);
+            var numberOfSplatsPerFace = normalizedAlpha[0].Count;
 
             string pathChunk = $"{m_OutputFolder}/{baseName}_chk.bytes";
             string pathAlpha = $"{m_OutputFolder}/{baseName}_alpha.bytes";
@@ -395,11 +405,11 @@ namespace GaussianSplatting.Editor
             bool useChunks = isUsingChunks;
             if (useChunks)
                 CreateChunkData(inputSplatsWithColors, pathChunk, ref dataHash);
-            Debug.Log($"First Splat Position from Create asset after reorder: {inputSplatsWithColors[0].scale} {normalizedAlpha[0][0].Count}");
+            Debug.Log($"First Splat Position from Create asset after reorder: {inputSplatsWithColors[0].scale} {numberOfSplatsPerFace}");
 
             CreatePositionsData(inputSplatsWithColors, pathPos, ref dataHash);
             CreateScaleData(scales, pathScale, ref dataHash);
-            CreateAlphasData(normalizedAlpha, pathAlpha, ref dataHash, normalizedAlpha[0][0].Count);
+            CreateAlphasData(normalizedAlpha, pathAlpha, ref dataHash, numberOfSplatsPerFace);
             CreateOtherData(inputSplatsWithColors, pathOther, ref dataHash, splatSHIndices);
             CreateColorData(inputSplatsWithColors, pathCol, ref dataHash);
             CreateSHData(inputSplatsWithColors, pathSh, ref dataHash, clusteredSHs);
@@ -718,8 +728,10 @@ namespace GaussianSplatting.Editor
             return normals;
         }
 
-        public static List<Vector3> GetMeshFaceVertices(GameObject gameObject)
+        public static List<Vector3> GetMeshFaceVertices(GameObject gameObject, string objPath)
         {
+            //In case of existing scene gameobject
+            /*
             MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
             if (meshFilter == null)
             {
@@ -733,10 +745,12 @@ namespace GaussianSplatting.Editor
                 Debug.LogError("No mesh found in the MeshFilter component.");
                 return null;
             }
+*/
+            var mesh = Resources.Load<GameObject>(objPath).transform.GetChild(0).GetComponent<MeshFilter>().sharedMesh;
+            var meshTransform = Resources.Load<GameObject>(objPath).transform;
 
-
-            // Vector3[] vertices = mesh.vertices;
-            Vector3[] vertices = TransformVertices(mesh.vertices);
+            Vector3[] vertices = mesh.vertices;
+            // Vector3[] vertices = TransformVertices(mesh.vertices);
 
             List<Vector3> faceVerticesList = new List<Vector3>();
             var triangles = mesh.triangles;
@@ -746,9 +760,9 @@ namespace GaussianSplatting.Editor
             for (int i = 0; i < totalFaces; i++)
             {
                 int baseIndex = i * 3;
-                Vector3 v0 = vertices[triangles[baseIndex]];
-                Vector3 v1 = vertices[triangles[baseIndex + 1]];
-                Vector3 v2 = vertices[triangles[baseIndex + 2]];
+                Vector3 v0 = meshTransform.TransformPoint(vertices[triangles[baseIndex]]);
+                Vector3 v1 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 1]]);
+                Vector3 v2 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 2]]);
 
                 faceVerticesList.Add(v0);
                 faceVerticesList.Add(v1);
@@ -1019,11 +1033,12 @@ namespace GaussianSplatting.Editor
         }
 
 
-        unsafe NativeArray<InputSplatData> CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, GameObject gameObject, int maxShDegree)
+        unsafe NativeArray<InputSplatData>
+        CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, GameObject gameObject, int maxShDegree)
         {
-            int numOfSplatsPerFace = alphas[0][0].Count;
+            int numOfSplatsPerFace = alphas[0].Count;
 
-            var faceVertices = GetMeshFaceVertices(gameObject);
+            var faceVertices = GetMeshFaceVertices(gameObject, m_ErrorMessage + m_MeshResourcePath);
             Debug.Log($"First Splat rotation from CreateSplatDataFromMemory: {alphas.Count} {faceVertices.Count}");
             List<Vector3> positions = CalculateXYZ(faceVertices, numOfSplatsPerFace, alphas);
             List<Vector3> normals = GenerateNormals(positions.Count);
@@ -1953,6 +1968,8 @@ namespace GaussianSplatting.Editor
                     m_InputJsonFile = path;
                 }
             }
+
+            m_MeshResourcePath = EditorGUILayout.TextField("Path to obj", m_MeshResourcePath);
 
             // Scene object
             m_SelectedSceneObject = (GameObject)EditorGUILayout.ObjectField("Scene Object", m_SelectedSceneObject, typeof(GameObject), true);
