@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-using System;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
-using Unity.Mathematics;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
 
 
 namespace GaussianSplatting.Runtime
@@ -23,6 +20,7 @@ namespace GaussianSplatting.Runtime
         Vector3 m_BoundsMin;
         Vector3 m_BoundsMax;
         Hash128 m_DataHash;
+        int m_NumberOfSplatsPerFace;
 
         string m_ObjPath;
 
@@ -34,6 +32,7 @@ namespace GaussianSplatting.Runtime
         public Hash128 dataHash => m_DataHash;
 
         public string objPath => m_ObjPath;
+        public int numberOfSplatsPerFace => m_NumberOfSplatsPerFace;
 
         public void Initialize(string name, int splats, GaussianSplatAsset.VectorFormat formatPos, GaussianSplatAsset.VectorFormat formatScale, GaussianSplatAsset.ColorFormat formatColor, GaussianSplatAsset.SHFormat formatSh, Vector3 bMin, Vector3 bMax, GaussianSplatAsset.CameraInfo[] cameraInfos, string pointCloudPath)
         {

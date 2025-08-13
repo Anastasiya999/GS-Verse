@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: MIT
 
-using System;
-using System.Collections.Generic;
-using System.IO;
-using GaussianSplatting.Runtime;
 using GaussianSplatting.Runtime.Utils;
 using Unity.Burst;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
-using UnityEditor;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
 
 namespace GaussianSplatting.Runtime
 {
@@ -116,7 +109,6 @@ namespace GaussianSplatting.Runtime
 
             splatSHIndices.Dispose();
             clusteredSHs.Dispose();
-            // inputSplats.Dispose();
 
             asset.setAssetData(
                useChunks ? chunkData : default,

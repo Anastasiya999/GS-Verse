@@ -1,7 +1,5 @@
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using GaussianSplatting.Runtime;
 using GaussianSplatting.Shared;
 using GaussianSplatting.Runtime.Utils;
 using Unity.Mathematics;
@@ -10,52 +8,28 @@ using System;
 using Unity.Jobs;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Burst;
-using System.IO;
 
 namespace GaussianSplatting.Runtime
 {
+
     public class SplatAccessor : MonoBehaviour
     {
 
         private GaussianSplatRenderer _splatRenderer;
-        private GaussianSplatRenderer _splatRendererBackground;
-        private MeshFilter _meshFilter;
-        private Mesh _mesh;
-        private bool needsAssetUpdate = false;
 
         Mesh deformingMesh;
         public float springForce = 20f;
+        public bool blenderMesh = false;
         float uniformScale = 1f;
         public float damping = 5f;
 
-        [Range(1f, 500f)]
-        public float stiffness = 100f;
-        public float idleDamping;
 
-
-        public int numberPtsPerTriangle = 3;
+        private int numberPtsPerTriangle = 3;
 
         public GameObject boundingBoxObject;
 
-        [Tooltip("The object that will control the stretch. Moving this object stretches the mesh.")]
-        public Transform target;
-
-        [Tooltip("The local point on the mesh that will remain stationary. (0, -0.5, 0) is the bottom of a default Unity cylinder or cube.")]
-        public Vector3 anchorPoint = new Vector3(0, -0.5f, 0);
-
-        [Tooltip("The axis in local space along which the mesh will stretch.")]
-        public Vector3 stretchAxis = Vector3.up;
-
-        private Vector3 originalTop;
-
-
-
-        [HideInInspector]
-        public string assetFilePath;
-
         private bool isClicked = false;
 
-        float frameCount = 0f;
 
         private NativeArray<int> selectedVertexIndices;
 
@@ -67,13 +41,12 @@ namespace GaussianSplatting.Runtime
         NativeArray<float3> vertexVelocities;
 
         NativeArray<int> triangles;
-        List<List<List<float>>> decodedAlphas;
         NativeArray<float3> decodedAlphasNative;
-
-        List<float> decodedScales;
         NativeArray<float> decodedScalesNative;
 
+
         private JobHandle createAssetJobHandle;
+
 
         private NativeArray<InputSplatData> inputSplatsData;
 
@@ -99,212 +72,322 @@ namespace GaussianSplatting.Runtime
         private bool isCreateAssetJobActive = false;
 
 
-        private bool isSegmented = false;
-
-
         private GaussianSplatRuntimeAssetCreator creator = null;
+        private GaussianGaMeSSplatAsset gaussianGaMeSSplatAsset = null;
 
         bool IsSelectionMode() => boundingBoxObject != null;
 
+        // Keep track of cleanup actions to run if initialization fails halfway.
+        private readonly List<Action> _deferredCleanup = new List<Action>();
+        private bool _initializedSuccessfully = false;
+
         void Start()
         {
-            _splatRenderer = GameObject.FindGameObjectWithTag("SplatRenderer").GetComponent<GaussianSplatRenderer>();
 
-            if (_splatRenderer.asset.isGaMeS_asset)
+            try
+            {
+                InitializeSafely();
+                _initializedSuccessfully = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"GaussianSplatInitializer: Initialization failed: {ex.Message}\n{ex.StackTrace}");
+                RunDeferredCleanup();
+            }
+        }
+
+        private void InitializeSafely()
+        {
+            // 1) Find and validate renderer
+            _splatRenderer = GameObject.FindGameObjectWithTag("SplatRenderer")?.GetComponent<GaussianSplatRenderer>();
+            if (_splatRenderer == null)
+                throw new InvalidOperationException("SplatRenderer with tag 'SplatRenderer' not found or missing GaussianSplatRenderer component.");
+
+            if (!(_splatRenderer.asset is GaussianGaMeSSplatAsset asset))
+                throw new InvalidOperationException("SplatRenderer.asset is not a GaussianGaMeSSplatAsset or is null.");
+
+            gaussianGaMeSSplatAsset = asset;
+
+            // 2) Validate asset payloads
+            numberPtsPerTriangle = gaussianGaMeSSplatAsset.numberOfSplatsPerFace;
+            if (numberPtsPerTriangle <= 0)
+                throw new InvalidOperationException($"Invalid numberOfSplatsPerFace: {numberPtsPerTriangle}");
+
+            // 3) Decode binary data -> Native Arrays (validate sizes)
+            byte[] fileBytes = gaussianGaMeSSplatAsset.alphaData.bytes;
+            byte[] fileScaleBytes = gaussianGaMeSSplatAsset.scaleData.bytes;
+
+            int faceCountEstimate = gaussianGaMeSSplatAsset.splatCount / numberPtsPerTriangle;
+            if (faceCountEstimate <= 0)
+                throw new InvalidOperationException("Calculated face count is zero or negative after dividing splatCount by numberPtsPerTriangle.");
+
+            decodedAlphasNative = DecodeAlphasToNativeFloat3(fileBytes, faceCountEstimate, numberPtsPerTriangle, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (decodedAlphasNative.IsCreated) decodedAlphasNative.Dispose(); });
+
+            decodedScalesNative = DecodeScalesToNative(fileScaleBytes, gaussianGaMeSSplatAsset.splatCount, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (decodedScalesNative.IsCreated) decodedScalesNative.Dispose(); });
+
+            // 4) Optional mesh replacement (Resources.Load) validation
+            if (!blenderMesh)
             {
 
-                byte[] fileBytes = _splatRenderer.asset.alphaData.bytes;
-                byte[] fileScaleBytes = _splatRenderer.asset.scaleData.bytes;
-                decodedAlphasNative = DecodeAlphasToNativeFloat3(fileBytes, _splatRenderer.asset.splatCount / numberPtsPerTriangle, numberPtsPerTriangle, Allocator.Persistent);
-                decodedScalesNative = DecodeScalesToNative(fileScaleBytes, _splatRenderer.asset.splatCount, Allocator.Persistent);
+                var loaded = Resources.Load<GameObject>(gaussianGaMeSSplatAsset.objPath);
+                if (loaded == null)
+                    throw new InvalidOperationException($"Resources.Load failed for path '{gaussianGaMeSSplatAsset.objPath}'.");
 
-                var mesh = Resources.Load<GameObject>(_splatRenderer.asset.objPath).transform.GetChild(0)
-                  .GetComponent<MeshFilter>().sharedMesh;
+                var child = loaded.transform.childCount > 0 ? loaded.transform.GetChild(0) : null;
+                if (child == null)
+                    throw new InvalidOperationException("Loaded object from Resources has no children to get MeshFilter from.");
 
-                Debug.Log(mesh);
-                MeshFilter meshfilter = gameObject.AddComponent<MeshFilter>();
-                meshfilter.mesh = mesh;
+                var meshFilter = child.GetComponent<MeshFilter>();
+                if (meshFilter == null || meshFilter.sharedMesh == null)
+                    throw new InvalidOperationException("Child GameObject does not contain a MeshFilter with a sharedMesh.");
 
+                MeshFilter addedMeshFilter = gameObject.AddComponent<MeshFilter>();
+                addedMeshFilter.mesh = meshFilter.sharedMesh;
             }
-            else
+
+            // 5) Disable child mesh renderers safely
+            foreach (var mr in GetComponentsInChildren<MeshRenderer>())
             {
-                Debug.LogError("posData is missing in GaussianSplatAsset!");
+                if (mr != null) mr.enabled = false;
             }
-            GetComponent<MeshRenderer>().enabled = false; // Hide the mesh
+
             uniformScale = transform.localScale.x;
-            deformingMesh = GetComponent<MeshFilter>().mesh;
+
+            // 6) Deforming mesh validation
+            var mf = GetComponent<MeshFilter>();
+            if (mf == null || mf.mesh == null)
+                throw new InvalidOperationException("Missing MeshFilter or mesh on this GameObject.");
+
+            deformingMesh = mf.mesh;
 
             var verts = deformingMesh.vertices;
             var tris = deformingMesh.triangles;
 
+            if (verts == null || verts.Length == 0)
+                throw new InvalidOperationException("Deforming mesh has no vertices.");
+            if (tris == null || tris.Length == 0)
+                throw new InvalidOperationException("Deforming mesh has no triangles.");
+
             int vertexCount = verts.Length;
             int triangleCount = tris.Length;
 
+            // Allocate per-vertex and triangle native arrays and register cleanup
             originalVertices = new NativeArray<float3>(vertexCount, Allocator.Persistent);
-            displacedVertices = new NativeArray<float3>(vertexCount, Allocator.Persistent);
-            vertexVelocities = new NativeArray<float3>(vertexCount, Allocator.Persistent);
-            triangles = new NativeArray<int>(triangleCount, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (originalVertices.IsCreated) originalVertices.Dispose(); });
 
+            displacedVertices = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (displacedVertices.IsCreated) displacedVertices.Dispose(); });
+
+            vertexVelocities = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (vertexVelocities.IsCreated) vertexVelocities.Dispose(); });
+
+            triangles = new NativeArray<int>(triangleCount, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (triangles.IsCreated) triangles.Dispose(); });
+
+            // copy data
             for (int i = 0; i < vertexCount; i++)
             {
                 float3 v = verts[i];
                 originalVertices[i] = v;
                 displacedVertices[i] = v;
+                vertexVelocities[i] = new float3(0, 0, 0);
             }
 
             for (int i = 0; i < triangleCount; i++)
-            {
                 triangles[i] = tris[i];
-            }
 
+            // 7) Create runtime input splats data creator (validate pointCloudPath)
             creator = new GaussianSplatRuntimeAssetCreator();
-            runTimeInputSplatsData = creator.CreateAsset(_splatRenderer.asset.pointCloudPath);
+            if (string.IsNullOrEmpty(gaussianGaMeSSplatAsset.pointCloudPath))
+                throw new InvalidOperationException("pointCloudPath on GaussianGaMeSSplatAsset is null or empty.");
 
+            runTimeInputSplatsData = creator.CreateAsset(gaussianGaMeSSplatAsset.pointCloudPath);
+            // Register only if creator returned a NativeArray or similar; we assume it's a NativeArray<InputSplatData>
+            RegisterNativeCleanup(() => { if (runTimeInputSplatsData.IsCreated) runTimeInputSplatsData.Dispose(); });
+
+            // 8) Selection vs full mode
             if (IsSelectionMode())
             {
-                // _splatRendererBackground = GameObject.FindGameObjectWithTag("SplatBackground").GetComponent<GaussianSplatRenderer>();
-                Transform meshTransform = transform;
-                Bounds bounds = GetWorldBounds(boundingBoxObject);
-                HashSet<int> vertexSet = new HashSet<int>();
-                List<int> originalTriangleIndicesList = new List<int>();
-
-                List<int> backgroundTriangleIndicesList = new List<int>();
-                HashSet<int> backgroundVertexSet = new HashSet<int>();
-                Debug.Log(bounds);
-
-                for (int i = 0; i < triangles.Length; i += 3)
-                {
-                    int i0 = triangles[i];
-                    int i1 = triangles[i + 1];
-                    int i2 = triangles[i + 2];
-
-                    Vector3 v0 = meshTransform.TransformPoint(originalVertices[i0]);
-                    Vector3 v1 = meshTransform.TransformPoint(originalVertices[i1]);
-                    Vector3 v2 = meshTransform.TransformPoint(originalVertices[i2]);
-
-                    // Check if any vertex of the triangle is inside the bounding box
-                    if (IsPointInsideOBB(boundingBoxObject.transform, v0) ||
-     IsPointInsideOBB(boundingBoxObject.transform, v1) ||
-     IsPointInsideOBB(boundingBoxObject.transform, v2))
-                    {
-                        vertexSet.Add(i0);
-                        vertexSet.Add(i1);
-                        vertexSet.Add(i2);
-                        originalTriangleIndicesList.Add(i / 3);
-                    }
-                    else
-                    {
-
-                        backgroundVertexSet.Add(i0);
-                        backgroundVertexSet.Add(i1);
-                        backgroundVertexSet.Add(i2);
-                        backgroundTriangleIndicesList.Add(i / 3);
-                    }
-                }
-
-                selectedVertexIndices = new NativeArray<int>(vertexSet.Count, Allocator.Persistent);
-                originalTriangleIndices = new NativeArray<int>(originalTriangleIndicesList.ToArray(), Allocator.Persistent);
-
-                selectedBackgroundVertexIndices = new NativeArray<int>(backgroundVertexSet.Count, Allocator.Persistent);
-                backgroundTriangleIndices = new NativeArray<int>(backgroundTriangleIndicesList.ToArray(), Allocator.Persistent);
-
-                int idx = 0;
-                foreach (int i in vertexSet)
-                {
-                    selectedVertexIndices[idx++] = i;
-                }
-                idx = 0;
-                foreach (int i in backgroundVertexSet)
-                {
-                    selectedBackgroundVertexIndices[idx++] = i;
-                }
-
-
-                inputSplatsData = new NativeArray<InputSplatData>(originalTriangleIndices.Length * numberPtsPerTriangle, Allocator.Persistent);
-                faceVertices = SplatMathUtils.GetMeshFaceSelectedVerticesNative(displacedVertices, triangles, originalTriangleIndices, Allocator.Persistent);
-                xyzValues = CreateXYZDataSelected(decodedAlphasNative, faceVertices, originalTriangleIndices, numberPtsPerTriangle);
-                (rotations, scalings) = CreateScaleRotationDataSelected(faceVertices, decodedScalesNative, originalTriangleIndices, numberPtsPerTriangle);
-
-                var job = new CreateAssetDataJobSelected()
-                {
-                    m_InputPos = xyzValues,
-                    m_InputRot = rotations,
-                    m_InputScale = scalings,
-                    m_Output = inputSplatsData,
-                    m_PrevOutput = runTimeInputSplatsData,
-                    m_originalTriangleIndices = originalTriangleIndices,
-                    m_numberPtsPerTriangle = numberPtsPerTriangle
-
-                };
-
-                createAssetJobHandle = job.Schedule(originalTriangleIndices.Length * numberPtsPerTriangle, 8192);
-                createAssetJobHandle.Complete();
-                CreateAsset();
-
-                backgroundInputSplatsData = new NativeArray<InputSplatData>(backgroundTriangleIndices.Length * numberPtsPerTriangle, Allocator.Persistent);
-                bgFaceVertices = SplatMathUtils.GetMeshFaceSelectedVerticesNative(displacedVertices, triangles, backgroundTriangleIndices, Allocator.Persistent);
-                bgXyzValues = CreateXYZDataSelected(decodedAlphasNative, bgFaceVertices, backgroundTriangleIndices, numberPtsPerTriangle);
-                (bgRotations, bgScalings) = CreateScaleRotationDataSelected(bgFaceVertices, decodedScalesNative, backgroundTriangleIndices, numberPtsPerTriangle);
-
-                var jobBg = new CreateAssetDataJobSelected()
-                {
-                    m_InputPos = bgXyzValues,
-                    m_InputRot = bgRotations,
-                    m_InputScale = bgScalings,
-                    m_Output = backgroundInputSplatsData,
-                    m_PrevOutput = runTimeInputSplatsData,
-                    m_originalTriangleIndices = backgroundTriangleIndices,
-                    m_numberPtsPerTriangle = numberPtsPerTriangle
-
-                };
-
-                createAssetBgJobHandle = jobBg.Schedule(backgroundTriangleIndices.Length * numberPtsPerTriangle, 8192);
-                createAssetBgJobHandle.Complete();
-                if (creator != null)
-                {
-                    //  var newAsset = creator.CreateAsset("new asset background", backgroundInputSplatsData, _splatRenderer.asset.alphaData, _splatRenderer.asset.scaleData, _splatRenderer.asset.pointCloudPath);
-                    //  _splatRendererBackground.InjectAsset(newAsset);
-                }
-
-                // ConfigureForegroundBackground(_splatRenderer, _splatRendererBackground);
-
+                InitializeSelectionMode();
             }
             else
             {
-
-                faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, displacedVertices, triangles, Allocator.Persistent);
-                xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, _splatRenderer.asset.splatCount / numberPtsPerTriangle, numberPtsPerTriangle);
-                (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, numberPtsPerTriangle);
-                inputSplatsData = new NativeArray<InputSplatData>(_splatRenderer.asset.splatCount, Allocator.Persistent);
-
-
-                var job = new CreateAssetDataJob()
-                {
-                    m_InputPos = xyzValues,
-                    m_InputRot = rotations,
-                    m_InputScale = scalings,
-                    m_PrevOutput = runTimeInputSplatsData,
-                    m_Output = inputSplatsData
-                };
-
-                createAssetJobHandle = job.Schedule(xyzValues.Length, 8192);
-                createAssetJobHandle.Complete();
-                CreateAsset();
-
+                InitializeFullMode();
             }
 
-
+            // Clear deferred cleanup actions because initialization succeeded.
+            _deferredCleanup.Clear();
         }
+        private void InitializeSelectionMode()
+        {
+            Transform meshTransform = transform;
+            Bounds bounds = GetWorldBounds(boundingBoxObject);
+            var vertexSet = new HashSet<int>();
+            var originalTriangleIndicesList = new List<int>();
+            var backgroundTriangleIndicesList = new List<int>();
+            var backgroundVertexSet = new HashSet<int>();
+
+            for (int i = 0; i < triangles.Length; i += 3)
+            {
+                int i0 = triangles[i];
+                int i1 = triangles[i + 1];
+                int i2 = triangles[i + 2];
+
+                Vector3 v0 = meshTransform.TransformPoint(originalVertices[i0]);
+                Vector3 v1 = meshTransform.TransformPoint(originalVertices[i1]);
+                Vector3 v2 = meshTransform.TransformPoint(originalVertices[i2]);
+
+                if (IsPointInsideOBB(boundingBoxObject.transform, v0) ||
+                    IsPointInsideOBB(boundingBoxObject.transform, v1) ||
+                    IsPointInsideOBB(boundingBoxObject.transform, v2))
+                {
+                    vertexSet.Add(i0); vertexSet.Add(i1); vertexSet.Add(i2);
+                    originalTriangleIndicesList.Add(i / 3);
+                }
+                else
+                {
+                    backgroundVertexSet.Add(i0); backgroundVertexSet.Add(i1); backgroundVertexSet.Add(i2);
+                    backgroundTriangleIndicesList.Add(i / 3);
+                }
+            }
+
+            // Allocate & register
+            selectedVertexIndices = new NativeArray<int>(vertexSet.Count, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (selectedVertexIndices.IsCreated) selectedVertexIndices.Dispose(); });
+
+            originalTriangleIndices = new NativeArray<int>(originalTriangleIndicesList.ToArray(), Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (originalTriangleIndices.IsCreated) originalTriangleIndices.Dispose(); });
+
+            selectedBackgroundVertexIndices = new NativeArray<int>(backgroundVertexSet.Count, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (selectedBackgroundVertexIndices.IsCreated) selectedBackgroundVertexIndices.Dispose(); });
+
+            backgroundTriangleIndices = new NativeArray<int>(backgroundTriangleIndicesList.ToArray(), Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (backgroundTriangleIndices.IsCreated) backgroundTriangleIndices.Dispose(); });
+
+            // fill sets
+            int idx = 0;
+            foreach (int i in vertexSet) selectedVertexIndices[idx++] = i;
+            idx = 0;
+            foreach (int i in backgroundVertexSet) selectedBackgroundVertexIndices[idx++] = i;
+
+            // Input allocations
+            inputSplatsData = new NativeArray<InputSplatData>(originalTriangleIndices.Length * numberPtsPerTriangle, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (inputSplatsData.IsCreated) inputSplatsData.Dispose(); });
+
+            faceVertices = SplatMathUtils.GetMeshFaceSelectedVerticesNative(displacedVertices, triangles, originalTriangleIndices, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (faceVertices.IsCreated) faceVertices.Dispose(); });
+
+            xyzValues = CreateXYZDataSelected(decodedAlphasNative, faceVertices, originalTriangleIndices, numberPtsPerTriangle);
+            RegisterNativeCleanup(() => { if (xyzValues.IsCreated) xyzValues.Dispose(); });
+
+            (rotations, scalings) = CreateScaleRotationDataSelected(faceVertices, decodedScalesNative, originalTriangleIndices, numberPtsPerTriangle);
+            RegisterNativeCleanup(() => { if (rotations.IsCreated) rotations.Dispose(); if (scalings.IsCreated) scalings.Dispose(); });
+
+            var job = new CreateAssetDataJobSelected()
+            {
+                m_InputPos = xyzValues,
+                m_InputRot = rotations,
+                m_InputScale = scalings,
+                m_Output = inputSplatsData,
+                m_PrevOutput = runTimeInputSplatsData,
+                m_originalTriangleIndices = originalTriangleIndices,
+                m_numberPtsPerTriangle = numberPtsPerTriangle
+            };
+
+            createAssetJobHandle = job.Schedule(originalTriangleIndices.Length * numberPtsPerTriangle, 8192);
+            createAssetJobHandle.Complete();
+
+            CreateAsset();
+
+            // Background
+            backgroundInputSplatsData = new NativeArray<InputSplatData>(backgroundTriangleIndices.Length * numberPtsPerTriangle, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (backgroundInputSplatsData.IsCreated) backgroundInputSplatsData.Dispose(); });
+
+            bgFaceVertices = SplatMathUtils.GetMeshFaceSelectedVerticesNative(displacedVertices, triangles, backgroundTriangleIndices, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (bgFaceVertices.IsCreated) bgFaceVertices.Dispose(); });
+
+            bgXyzValues = CreateXYZDataSelected(decodedAlphasNative, bgFaceVertices, backgroundTriangleIndices, numberPtsPerTriangle);
+            RegisterNativeCleanup(() => { if (bgXyzValues.IsCreated) bgXyzValues.Dispose(); });
+
+            (bgRotations, bgScalings) = CreateScaleRotationDataSelected(bgFaceVertices, decodedScalesNative, backgroundTriangleIndices, numberPtsPerTriangle);
+            RegisterNativeCleanup(() => { if (bgRotations.IsCreated) bgRotations.Dispose(); if (bgScalings.IsCreated) bgScalings.Dispose(); });
+
+            var jobBg = new CreateAssetDataJobSelected()
+            {
+                m_InputPos = bgXyzValues,
+                m_InputRot = bgRotations,
+                m_InputScale = bgScalings,
+                m_Output = backgroundInputSplatsData,
+                m_PrevOutput = runTimeInputSplatsData,
+                m_originalTriangleIndices = backgroundTriangleIndices,
+                m_numberPtsPerTriangle = numberPtsPerTriangle
+            };
+
+            createAssetBgJobHandle = jobBg.Schedule(backgroundTriangleIndices.Length * numberPtsPerTriangle, 8192);
+            createAssetBgJobHandle.Complete();
+        }
+
+        private void InitializeFullMode()
+        {
+            faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, displacedVertices, triangles, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (faceVertices.IsCreated) faceVertices.Dispose(); });
+
+            xyzValues = CreateXYZData(decodedAlphasNative, faceVertices, gaussianGaMeSSplatAsset.splatCount / numberPtsPerTriangle, numberPtsPerTriangle);
+            RegisterNativeCleanup(() => { if (xyzValues.IsCreated) xyzValues.Dispose(); });
+
+            (rotations, scalings) = CreateScaleRotationData(faceVertices, decodedScalesNative, numberPtsPerTriangle);
+            RegisterNativeCleanup(() => { if (rotations.IsCreated) rotations.Dispose(); if (scalings.IsCreated) scalings.Dispose(); });
+
+            inputSplatsData = new NativeArray<InputSplatData>(_splatRenderer.asset.splatCount, Allocator.Persistent);
+            RegisterNativeCleanup(() => { if (inputSplatsData.IsCreated) inputSplatsData.Dispose(); });
+
+            var job = new CreateAssetDataJob()
+            {
+                m_InputPos = xyzValues,
+                m_InputRot = rotations,
+                m_InputScale = scalings,
+                m_PrevOutput = runTimeInputSplatsData,
+                m_Output = inputSplatsData
+            };
+
+            createAssetJobHandle = job.Schedule(xyzValues.Length, 8192);
+            createAssetJobHandle.Complete();
+
+            CreateAsset();
+        }
+        private void RegisterNativeCleanup(Action cleanupAction)
+        {
+            if (cleanupAction != null) _deferredCleanup.Add(cleanupAction);
+        }
+
+        private void RunDeferredCleanup()
+        {
+            for (int i = _deferredCleanup.Count - 1; i >= 0; --i)
+            {
+                try { _deferredCleanup[i]?.Invoke(); }
+                catch (Exception e) { Debug.LogWarning($"Cleanup action failed: {e.Message}"); }
+            }
+            _deferredCleanup.Clear();
+        }
+
         bool IsPointInsideOBB(Transform boxTransform, Vector3 point)
         {
+
+            MeshFilter meshFilter = boxTransform.GetComponent<MeshFilter>();
+            if (meshFilter == null || meshFilter.sharedMesh == null)
+                return false;
+
+            Bounds localBounds = meshFilter.sharedMesh.bounds;
+
             Vector3 localPoint = boxTransform.InverseTransformPoint(point);
-            Vector3 halfSize = Vector3.one * 0.5f; // assuming default 1x1x1 cube
+
+            Vector3 halfSize = localBounds.extents;
             return Mathf.Abs(localPoint.x) <= halfSize.x &&
                    Mathf.Abs(localPoint.y) <= halfSize.y &&
                    Mathf.Abs(localPoint.z) <= halfSize.z;
         }
-
-
 
 
         void Update()
@@ -329,17 +412,16 @@ namespace GaussianSplatting.Runtime
                 return;
             }
 
-            frameCount++;
+
             var dis = 1f;
             bool mouseDown = isClicked;
 
             if (mouseDown)
             {
 
+
                 if (IsSelectionMode())
                 {
-
-
                     var springJob = new VertexSpringJobSelected
                     {
                         deltaTime = Time.deltaTime,
@@ -347,7 +429,6 @@ namespace GaussianSplatting.Runtime
                         damping = damping,
                         uniformScale = uniformScale,
                         dis = dis,
-
                         displacedVertices = displacedVertices,
                         originalVertices = originalVertices,
                         vertexVelocities = vertexVelocities,
@@ -381,7 +462,6 @@ namespace GaussianSplatting.Runtime
             else
             {
 
-
                 if (IsSelectionMode())
                 {
                     ReturnToOriginalShapeSelected(selectedVertexIndices);
@@ -390,8 +470,6 @@ namespace GaussianSplatting.Runtime
                 {
                     ReturnToOriginalShape();
                 }
-
-
 
             }
 
@@ -446,76 +524,130 @@ namespace GaussianSplatting.Runtime
 
         }
 
-        private NativeArray<InputSplatData> CopyTo(NativeArray<InputSplatData> source)
-        {
-            NativeArray<InputSplatData> copy = new NativeArray<InputSplatData>(source.Length, Allocator.Persistent);
-            NativeArray<InputSplatData>.Copy(source, copy);
-            return copy;
-        }
 
-        void OnDestroy()
+        private void OnDestroy()
         {
-
-            if (isCreateAssetJobActive)
+            // 1) Ensure jobs that produce/consume data are finished.
+            try
             {
-                createAssetJobHandle.Complete();
-                isCreateAssetJobActive = false;
+                if (isCreateAssetJobActive)
+                {
+                    try
+                    {
+                        createAssetJobHandle.Complete();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"Failed to complete createAssetJobHandle in OnDestroy: {ex.Message}");
+                    }
+                    isCreateAssetJobActive = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Error while completing jobs in OnDestroy: {ex.Message}");
             }
 
-
-
-            if (inputSplatsData.IsCreated)
-                inputSplatsData.Dispose();
-            if (runTimeInputSplatsData.IsCreated)
-                runTimeInputSplatsData.Dispose();
-            if (backgroundInputSplatsData.IsCreated)
-                backgroundInputSplatsData.Dispose();
-            DisposeIfCreated(ref originalVertices);
-            DisposeIfCreated(ref displacedVertices);
-            DisposeIfCreated(ref vertexVelocities);
-
-            DisposeIfCreated(ref triangles);
-
-            DisposeIfCreated(ref decodedAlphasNative);
-            DisposeIfCreated(ref decodedScalesNative);
-
+            // 2) Dispose in reverse dependency order. Each call is safe and idempotent.
+            // Background / input arrays first
+            DisposeIfCreated(ref backgroundInputSplatsData);
             DisposeIfCreated(ref inputSplatsData);
             DisposeIfCreated(ref runTimeInputSplatsData);
 
-            DisposeIfCreated(ref faceVertices);
+            // Background job outputs & temporaries
+            DisposeIfCreated(ref bgXyzValues);
+            DisposeIfCreated(ref bgRotations);
+            DisposeIfCreated(ref bgScalings);
+            DisposeIfCreated(ref bgFaceVertices);
+
+            // Main job outputs & temporaries
             DisposeIfCreated(ref xyzValues);
             DisposeIfCreated(ref rotations);
             DisposeIfCreated(ref scalings);
+            DisposeIfCreated(ref faceVertices);
 
-            DisposeIfCreated(ref originalTriangleIndices);
-            DisposeIfCreated(ref selectedVertexIndices);
+            // Decoded raw data
+            DisposeIfCreated(ref decodedAlphasNative);
+            DisposeIfCreated(ref decodedScalesNative);
 
-            DisposeIfCreated(ref bgFaceVertices);
-            DisposeIfCreated(ref bgRotations);
-            DisposeIfCreated(ref bgScalings);
-            DisposeIfCreated(ref bgXyzValues);
-            DisposeIfCreated(ref backgroundTriangleIndices);
+            // Selection arrays
             DisposeIfCreated(ref selectedBackgroundVertexIndices);
+            DisposeIfCreated(ref backgroundTriangleIndices);
+            DisposeIfCreated(ref selectedVertexIndices);
+            DisposeIfCreated(ref originalTriangleIndices);
+
+            // Mesh arrays last (they are more fundamental)
+            DisposeIfCreated(ref triangles);
+            DisposeIfCreated(ref vertexVelocities);
+            DisposeIfCreated(ref displacedVertices);
+            DisposeIfCreated(ref originalVertices);
         }
 
-        public static void SetRenderOrder(GaussianSplatRenderer renderer, int order)
-        {
-            if (renderer != null)
-                renderer.m_RenderOrder = order;
-        }
-
-        public static void ConfigureForegroundBackground(GaussianSplatRenderer foreground, GaussianSplatRenderer background)
-        {
-            SetRenderOrder(background, 1);
-            SetRenderOrder(foreground, 2);
-        }
-
+        // Exception-safe, idempotent dispose helper
         private void DisposeIfCreated<T>(ref NativeArray<T> array) where T : struct
         {
-            if (array.IsCreated)
+            try
             {
-                array.Dispose();
+                if (array.IsCreated)
+                {
+                    array.Dispose();
+                }
             }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"Error disposing NativeArray<{typeof(T).Name}>: {e.Message}");
+            }
+            finally
+            {
+                // Reset to default so future disposals / checks are safe and can't double-dispose
+                array = default;
+            }
+        }
+
+
+        // private void DisposeIfCreated<T>(ref NativeArray<T> array) where T : struct
+        // {
+        //     if (array.IsCreated)
+        //     {
+        //         array.Dispose();
+        //     }
+        // }
+
+        private void DisposeAllManagedResources()
+        {
+            // Dispose all persistent NativeArrays that might have been created when init succeeded
+            Action safeDispose = () =>
+            {
+                void TryDispose<T>(ref NativeArray<T> arr) where T : struct
+                {
+                    try { if (arr.IsCreated) arr.Dispose(); }
+                    catch (Exception ex) { Debug.LogWarning($"Error disposing NativeArray: {ex.Message}"); }
+                }
+
+                TryDispose(ref decodedAlphasNative);
+                TryDispose(ref decodedScalesNative);
+                TryDispose(ref originalVertices);
+                TryDispose(ref displacedVertices);
+                TryDispose(ref vertexVelocities);
+                TryDispose(ref triangles);
+                TryDispose(ref runTimeInputSplatsData);
+                TryDispose(ref selectedVertexIndices);
+                TryDispose(ref originalTriangleIndices);
+                TryDispose(ref selectedBackgroundVertexIndices);
+                TryDispose(ref backgroundTriangleIndices);
+                TryDispose(ref inputSplatsData);
+                TryDispose(ref faceVertices);
+                TryDispose(ref xyzValues);
+                TryDispose(ref rotations);
+                TryDispose(ref scalings);
+                TryDispose(ref backgroundInputSplatsData);
+                TryDispose(ref bgFaceVertices);
+                TryDispose(ref bgXyzValues);
+                TryDispose(ref bgRotations);
+                TryDispose(ref bgScalings);
+            };
+
+            safeDispose();
         }
 
         public static Vector3[] ConvertToVector3Array(NativeArray<float3> nativeArray)
@@ -541,7 +673,6 @@ namespace GaussianSplatting.Runtime
             {
                 displacedVertices[i] = Vector3.Lerp(displacedVertices[i], originalVertices[i], Time.deltaTime * 5f);
             }
-
 
             deformingMesh.SetVertices(displacedVertices);
         }
@@ -574,12 +705,15 @@ namespace GaussianSplatting.Runtime
             {
 
                 float3 velocity = vertexVelocities[i];
-                float3 displacement = (displacedVertices[i] - originalVertices[i]) * uniformScale;
-                velocity -= displacement * springForce * deltaTime;
-                velocity *= 1f - damping * deltaTime;
-                vertexVelocities[i] = velocity;
+                if (velocity.x != 0f && velocity.y != 0f && velocity.z != 0f)
+                {
+                    float3 displacement = (displacedVertices[i] - originalVertices[i]) * uniformScale;
+                    velocity -= displacement * springForce * deltaTime;
+                    velocity *= 1f - damping * deltaTime;
+                    vertexVelocities[i] = velocity;
 
-                displacedVertices[i] += velocity * (deltaTime / uniformScale);
+                    displacedVertices[i] += velocity * (deltaTime / uniformScale);
+                }
 
             }
         }
@@ -597,6 +731,7 @@ namespace GaussianSplatting.Runtime
             [NativeDisableParallelForRestriction] public NativeArray<float3> originalVertices;
             [NativeDisableParallelForRestriction] public NativeArray<float3> vertexVelocities;
 
+
             [ReadOnly] public NativeArray<int> selectedVertexIndices;
 
             public void Execute(int index)
@@ -605,18 +740,19 @@ namespace GaussianSplatting.Runtime
                 int i = selectedVertexIndices[index];
 
                 float3 velocity = vertexVelocities[i];
+
+                float3 localPos = displacedVertices[i];
+
+
                 if (velocity.x != 0f && velocity.y != 0f && velocity.z != 0f)
                 {
                     float3 displacement = (displacedVertices[i] - originalVertices[i]) * uniformScale;
                     velocity -= displacement * springForce * deltaTime;
                     velocity *= 1f - damping * deltaTime;
                     vertexVelocities[i] = velocity;
-
                     displacedVertices[i] += velocity * (deltaTime / uniformScale);
+
                 }
-
-
-
             }
         }
 
@@ -634,12 +770,21 @@ namespace GaussianSplatting.Runtime
 
             public void Execute(int i)
             {
-                Vector3 pointToVertex = displacedVertices[i] - (float3)pointLocal;
-                pointToVertex *= uniformScale;
 
-                float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
-                Vector3 appliedForce = force * attenuation * deltaTime;
-                vertexVelocities[i] += (float3)appliedForce;
+                if (force == Vector3.zero)
+                {
+                    vertexVelocities[i] = Vector3.zero;
+                }
+                else
+                {
+                    Vector3 pointToVertex = displacedVertices[i] - (float3)pointLocal;
+                    pointToVertex *= uniformScale;
+
+                    float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
+                    Vector3 appliedForce = force * attenuation * deltaTime;
+                    vertexVelocities[i] += (float3)appliedForce;
+
+                }
 
             }
         }
@@ -749,10 +894,6 @@ namespace GaussianSplatting.Runtime
 
             Vector3 pointLocal = transform.InverseTransformPoint(point);
 
-            Debug.Log("adding force");
-            Debug.Log(pointLocal);
-
-
             if (IsSelectionMode())
             {
                 var job = new AddDeformingForceJobSelected
@@ -823,9 +964,9 @@ namespace GaussianSplatting.Runtime
 
         unsafe void CreateAsset()
         {
-            if (creator != null)
+            if (creator != null && gaussianGaMeSSplatAsset)
             {
-                var newAsset = creator.CreateAsset("new asset", inputSplatsData, _splatRenderer.asset.alphaData, _splatRenderer.asset.scaleData, _splatRenderer.asset.pointCloudPath);
+                var newAsset = creator.CreateAsset("new asset", inputSplatsData, gaussianGaMeSSplatAsset.alphaData, gaussianGaMeSSplatAsset.scaleData, gaussianGaMeSSplatAsset.pointCloudPath);
                 _splatRenderer.InjectAsset(newAsset);
 
             }
@@ -1145,18 +1286,7 @@ namespace GaussianSplatting.Runtime
             }
         }
 
-        public void MarkAssetDirty()
-        {
-            needsAssetUpdate = true;
-        }
 
-
-        static void LinearizeData(NativeArray<InputSplatRuntimeData> splatData)
-        {
-            LinearizeDataJob job = new LinearizeDataJob();
-            job.splatData = splatData;
-            job.Schedule(splatData.Length, 4096).Complete();
-        }
         [BurstCompile]
         struct LinearizeDataJob : IJobParallelFor
         {
@@ -1191,9 +1321,6 @@ namespace GaussianSplatting.Runtime
             };
             order.Schedule(splatData.Length, 4096).Complete();
             order.m_Order.Sort(new OrderComparer());
-
-
-
 
             NativeArray<InputSplatRuntimeData> copy = new(order.m_SplatData, Allocator.Persistent);
             for (int i = 0; i < copy.Length; ++i)
@@ -1253,7 +1380,6 @@ namespace GaussianSplatting.Runtime
                 return a.Item2 - b.Item2;
             }
         }
-
 
 
         static uint EncodeQuatToNorm10(float4 v) // 32 bits: 10.10.10.2
