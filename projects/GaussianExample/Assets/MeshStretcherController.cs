@@ -85,10 +85,8 @@ public class MeshStretcherController : MonoBehaviour
         }
 
     }
-
     void ProcessRayInteraction()
     {
-
         if (!actionHeld)
         {
             if (currentDeformer != null)
@@ -105,7 +103,6 @@ public class MeshStretcherController : MonoBehaviour
             if (rayInteractor.TryGetCurrent3DRaycastHit(out RaycastHit hitInfo))
             {
                 SplatAccessor deformerOnHit = hitInfo.collider.GetComponentInParent<SplatAccessor>();
-                // if (deformerOnHit != null && hitInfo.collider.gameObject.CompareTag("Collider"))
                 if (deformerOnHit != null)
                 {
                     currentDeformer = deformerOnHit;
@@ -114,9 +111,9 @@ public class MeshStretcherController : MonoBehaviour
                     // Lock interaction distance
                     lockedInteractionDistance = hitInfo.distance;
 
-                    // Store initial point
-                    Vector3 initialHitPoint = hitInfo.point + hitInfo.normal * forceOffset;
-                    lastXRHitPoint = currentDeformer.transform.InverseTransformPoint(initialHitPoint);
+                    // Store initial point IN WORLD SPACE (simpler & less prone to scale bugs)
+                    Vector3 initialHitPointWorld = hitInfo.point + hitInfo.normal * forceOffset;
+                    lastXRHitPoint = initialHitPointWorld;
                 }
             }
         }
@@ -130,24 +127,34 @@ public class MeshStretcherController : MonoBehaviour
             }
 
             Transform rayTransform = rayInteractor.rayOriginTransform;
-            Vector3 currentVirtualPoint = rayTransform.position + rayTransform.forward * lockedInteractionDistance.Value;
-            Vector3 currentLocalPoint = currentDeformer.transform.InverseTransformPoint(currentVirtualPoint);
+            Vector3 currentVirtualPointWorld = rayTransform.position + rayTransform.forward * lockedInteractionDistance.Value;
 
             if (lastXRHitPoint.HasValue)
             {
-                Vector3 localDragDirection = currentLocalPoint - lastXRHitPoint.Value;
-                Vector3 worldDragDirection = currentDeformer.transform.TransformDirection(localDragDirection);
+                // Compute world-space drag
+                Vector3 worldDrag = currentVirtualPointWorld - lastXRHitPoint.Value;
 
-                Vector3 dragForce = worldDragDirection.sqrMagnitude < 0.0001f
-                    ? Vector3.zero
-                    : worldDragDirection * dragStrength;
+                float triggerValue = 1f;
+                if (stretchActionReference != null && stretchActionReference.action != null)
+                {
+                    // If the action is analog (0..1), use it; if not, this returns 0/1 depending on binding
+                    triggerValue = stretchActionReference.action.ReadValue<float>();
+                }
 
-                currentDeformer.AddDeformingForce(currentVirtualPoint, currentDeformer.transform.InverseTransformDirection(dragForce));
+                // Build world force
+                Vector3 worldForce = worldDrag.sqrMagnitude >= 0.001 ? worldDrag * dragStrength * triggerValue : Vector3.zero;
+
+
+                currentDeformer.AddDeformingForce(currentVirtualPointWorld, worldForce);
+
+
             }
 
-            lastXRHitPoint = currentLocalPoint;
+            // Update last world-space point
+            lastXRHitPoint = currentVirtualPointWorld;
         }
     }
+
     private void ResetDeformationState()
     {
         lastXRHitPoint = null;

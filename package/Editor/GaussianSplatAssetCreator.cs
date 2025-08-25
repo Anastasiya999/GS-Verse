@@ -542,7 +542,7 @@ namespace GaussianSplatting.Editor
 
         void CreateScaleData(List<List<float>> scales, string filePath, ref Hash128 dataHash)
         {
-            int dataLen = scales.Count * 4;
+            int dataLen = scales.Count * GaussianSplatAsset.GetVectorSize(GaussianSplatAsset.VectorFormat.Norm11);
             int splatCount = scales.Count;
 
             NativeArray<float> flatScale = new(splatCount, Allocator.TempJob);
