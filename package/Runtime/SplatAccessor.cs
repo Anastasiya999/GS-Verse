@@ -35,7 +35,6 @@ namespace GaussianSplatting.Runtime
         private NativeArray<float> selectedVertexWeights;
 
         NativeArray<int> originalTriangleIndices;
-        public Vector3 testVertexLocal = new Vector3(0.5f, 0.5f, 0.5f);
 
 
         NativeArray<float3> originalVertices;
@@ -325,7 +324,7 @@ namespace GaussianSplatting.Runtime
                 }
             }
 
-            CreateOrUpdateRuntimeMarkers();
+            //CreateOrUpdateRuntimeMarkers();
 
             // Allocate & register
             selectedVertexIndices = new NativeArray<int>(vertexSet.Count, Allocator.Persistent);
