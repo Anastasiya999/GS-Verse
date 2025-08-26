@@ -93,6 +93,9 @@ namespace GaussianSplatting.Runtime
         public Vector3 maxPointLocal;
         public Vector3 minPointWorld;
         public Vector3 maxPointWorld;
+        private bool needsRebuild = true;
+        [SerializeField] private float returnFinishEpsilon = 1e-4f;
+
 
 
         void Start()
@@ -134,6 +137,7 @@ namespace GaussianSplatting.Runtime
 
             // 2) Validate asset payloads
             numberPtsPerTriangle = gaussianGaMeSSplatAsset.numberOfSplatsPerFace;
+
             if (numberPtsPerTriangle <= 0)
                 throw new InvalidOperationException($"Invalid numberOfSplatsPerFace: {numberPtsPerTriangle}");
 
@@ -624,7 +628,6 @@ namespace GaussianSplatting.Runtime
             if (mouseDown)
             {
 
-
                 if (IsSelectionMode())
                 {
                     var springJob = new VertexSpringJobSelected
@@ -666,14 +669,13 @@ namespace GaussianSplatting.Runtime
             }
             else
             {
-
                 if (IsSelectionMode())
                 {
-                    ReturnToOriginalShapeSelected(selectedVertexIndices);
+                    needsRebuild = ReturnToOriginalShapeSelected(selectedVertexIndices);
                 }
                 else
                 {
-                    ReturnToOriginalShape();
+                    needsRebuild = ReturnToOriginalShape();
                 }
 
             }
@@ -681,7 +683,7 @@ namespace GaussianSplatting.Runtime
             deformingMesh.SetVertices(displacedVertices);
             // deformingMesh.RecalculateNormals();
 
-            if (!isCreateAssetJobActive)
+            if (!isCreateAssetJobActive && needsRebuild)
             {
                 if (IsSelectionMode())
                 {
@@ -724,6 +726,7 @@ namespace GaussianSplatting.Runtime
 
 
                 isCreateAssetJobActive = true;
+                needsRebuild = false; // reset until something changes next
             }
 
 
@@ -816,52 +819,6 @@ namespace GaussianSplatting.Runtime
             }
         }
 
-
-        // private void DisposeIfCreated<T>(ref NativeArray<T> array) where T : struct
-        // {
-        //     if (array.IsCreated)
-        //     {
-        //         array.Dispose();
-        //     }
-        // }
-
-        private void DisposeAllManagedResources()
-        {
-            // Dispose all persistent NativeArrays that might have been created when init succeeded
-            Action safeDispose = () =>
-            {
-                void TryDispose<T>(ref NativeArray<T> arr) where T : struct
-                {
-                    try { if (arr.IsCreated) arr.Dispose(); }
-                    catch (Exception ex) { Debug.LogWarning($"Error disposing NativeArray: {ex.Message}"); }
-                }
-
-                TryDispose(ref decodedAlphasNative);
-                TryDispose(ref decodedScalesNative);
-                TryDispose(ref originalVertices);
-                TryDispose(ref displacedVertices);
-                TryDispose(ref vertexVelocities);
-                TryDispose(ref triangles);
-                TryDispose(ref runTimeInputSplatsData);
-                TryDispose(ref selectedVertexIndices);
-                TryDispose(ref originalTriangleIndices);
-                TryDispose(ref selectedBackgroundVertexIndices);
-                TryDispose(ref backgroundTriangleIndices);
-                TryDispose(ref inputSplatsData);
-                TryDispose(ref faceVertices);
-                TryDispose(ref xyzValues);
-                TryDispose(ref rotations);
-                TryDispose(ref scalings);
-                TryDispose(ref backgroundInputSplatsData);
-                TryDispose(ref bgFaceVertices);
-                TryDispose(ref bgXyzValues);
-                TryDispose(ref bgRotations);
-                TryDispose(ref bgScalings);
-            };
-
-            safeDispose();
-        }
-
         public static Vector3[] ConvertToVector3Array(NativeArray<float3> nativeArray)
         {
             Vector3[] result = new Vector3[nativeArray.Length];
@@ -879,25 +836,36 @@ namespace GaussianSplatting.Runtime
             isClicked = clicked;
         }
 
-        void ReturnToOriginalShape()
+        bool ReturnToOriginalShape()
         {
+            float maxDispSq = 0f;
             for (int i = 0; i < displacedVertices.Length; i++)
             {
+                float3 diff = displacedVertices[i] - originalVertices[i];
+                float dsq = math.lengthsq(diff);
+                if (dsq > maxDispSq) maxDispSq = dsq;
                 displacedVertices[i] = Vector3.Lerp(displacedVertices[i], originalVertices[i], Time.deltaTime * 5f);
             }
 
             deformingMesh.SetVertices(displacedVertices);
+            return maxDispSq > returnFinishEpsilon * returnFinishEpsilon;
         }
 
-        void ReturnToOriginalShapeSelected(NativeArray<int> selectedVertexIndices)
+        bool ReturnToOriginalShapeSelected(NativeArray<int> selectedVertexIndices)
         {
+            float maxDispSq = 0f;
             for (int i = 0; i < selectedVertexIndices.Length; i++)
             {
+
                 int index = selectedVertexIndices[i];
+                float3 diff = displacedVertices[index] - originalVertices[index];
+                float dsq = math.lengthsq(diff);
+                if (dsq > maxDispSq) maxDispSq = dsq;
                 displacedVertices[index] = Vector3.Lerp(displacedVertices[index], originalVertices[index], Time.deltaTime * 5f);
             }
 
             deformingMesh.SetVertices(displacedVertices);
+            return maxDispSq > returnFinishEpsilon * returnFinishEpsilon;
         }
 
         [BurstCompile]
@@ -1069,6 +1037,7 @@ namespace GaussianSplatting.Runtime
                     Vector3 appliedForce = force * attenuation * deltaTime;
                     vertexVelocities[i] += (float3)appliedForce;
 
+
                 }
 
             }
@@ -1212,7 +1181,7 @@ namespace GaussianSplatting.Runtime
                 handle.Complete();
             }
 
-
+            needsRebuild = true;
         }
 
 

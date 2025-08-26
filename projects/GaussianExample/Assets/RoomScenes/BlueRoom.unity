@@ -701,7 +701,7 @@ Transform:
   m_GameObject: {fileID: 998787871}
   serializedVersion: 2
   m_LocalRotation: {x: -0.0018128513, y: -0.9981624, z: -0.04613829, w: 0.0392398}
-  m_LocalPosition: {x: -4.500307, y: 2.5230803, z: -1.7403831}
+  m_LocalPosition: {x: -4.500307, y: 13.02, z: -1.7403831}
   m_LocalScale: {x: 3.581, y: 3.581, z: 3.581}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1164,7 +1164,6 @@ MonoBehaviour:
   blenderMesh: 0
   damping: 5
   boundingBoxObject: {fileID: 2126656331}
-  testVertexLocal: {x: 0.5, y: 0.5, z: 0.5}
   topColor: {r: 0, g: 1, b: 0, a: 1}
   bottomColor: {r: 1, g: 0, b: 0, a: 1}
   gizmoSphereRadius: 0.02
@@ -1172,6 +1171,7 @@ MonoBehaviour:
   maxPointLocal: {x: 0, y: 0, z: 0}
   minPointWorld: {x: 0, y: 0, z: 0}
   maxPointWorld: {x: 0, y: 0, z: 0}
+  returnFinishEpsilon: 0.0001
 --- !u!23 &1564577803
 MeshRenderer:
   m_ObjectHideFlags: 0
