@@ -8,6 +8,7 @@ using System;
 using Unity.Jobs;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Burst;
+using UnityEngine.XR;
 
 namespace GaussianSplatting.Runtime
 {
@@ -29,6 +30,8 @@ namespace GaussianSplatting.Runtime
         public GameObject boundingBoxObject;
 
         private bool isClicked = false;
+
+        private bool isPressed = false;
 
 
         private NativeArray<int> selectedVertexIndices;
@@ -80,7 +83,6 @@ namespace GaussianSplatting.Runtime
 
         // Keep track of cleanup actions to run if initialization fails halfway.
         private readonly List<Action> _deferredCleanup = new List<Action>();
-        private bool _initializedSuccessfully = false;
 
         // runtime markers
         private GameObject topMarker;
@@ -104,7 +106,7 @@ namespace GaussianSplatting.Runtime
             try
             {
                 InitializeSafely();
-                _initializedSuccessfully = true;
+
             }
             catch (Exception ex)
             {
@@ -127,6 +129,7 @@ namespace GaussianSplatting.Runtime
         {
             // 1) Find and validate renderer
             _splatRenderer = FindWithChildTag(gameObject, "SplatRenderer");
+
             if (_splatRenderer == null)
                 throw new InvalidOperationException("SplatRenderer with tag 'SplatRenderer' not found or missing GaussianSplatRenderer component.");
 
@@ -252,8 +255,6 @@ namespace GaussianSplatting.Runtime
         {
             float minY = float.MaxValue;
             float maxY = float.MinValue;
-
-
             Transform meshTransform = transform;
             Bounds bounds = GetWorldBounds(boundingBoxObject);
             var vertexSet = new HashSet<int>();
@@ -281,54 +282,17 @@ namespace GaussianSplatting.Runtime
                 {
                     vertexSet.Add(i0); vertexSet.Add(i1); vertexSet.Add(i2);
                     originalTriangleIndicesList.Add(i / 3);
+                    UpdateMinMaxMeshMargins(v0, v1, v2, originalVertices[i0], originalVertices[i1], originalVertices[i2], ref minPointWorld, ref maxPointWorld, ref minPointLocal, ref maxPointLocal, ref minY, ref maxY);
 
-                    if (v0y < minY)
-                    {
-                        minPointWorld = v0;
-                        minPointLocal = originalVertices[i0];
-                        minY = v0y;
-                    }
-                    if (v1y < minY)
-                    {
-                        minPointWorld = v1;
-                        minPointLocal = originalVertices[i1];
-                        minY = v1y;
-                    }
-                    if (v2y < minY)
-                    {
-                        minPointWorld = v2;
-                        minPointLocal = originalVertices[i2];
-                        minY = v2y;
-                    }
-                    //max
 
-                    if (v0y > maxY)
-                    {
-                        maxPointWorld = v0;
-                        maxPointLocal = originalVertices[i0];
-                        maxY = v0y;
-                    }
-                    if (v1y > maxY)
-                    {
-                        maxPointWorld = v1;
-                        maxPointLocal = originalVertices[i1];
-                        maxY = v1y;
-                    }
-                    if (v2y > maxY)
-                    {
-                        maxPointWorld = v2;
-                        maxPointLocal = originalVertices[i2];
-                        maxY = v2y;
-                    }
                 }
                 else
                 {
                     backgroundVertexSet.Add(i0); backgroundVertexSet.Add(i1); backgroundVertexSet.Add(i2);
                     backgroundTriangleIndicesList.Add(i / 3);
                 }
-            }
 
-            //CreateOrUpdateRuntimeMarkers();
+            }
 
             // Allocate & register
             selectedVertexIndices = new NativeArray<int>(vertexSet.Count, Allocator.Persistent);
@@ -354,7 +318,7 @@ namespace GaussianSplatting.Runtime
 
                 selectedVertexIndices[idx++] = i;
                 float y = originalVertices[i].y;
-                selectedVertexWeights[idx2++] = 1f - math.clamp((y - minPointLocal.y) / denom, 0f, 1.0f);
+                selectedVertexWeights[idx2++] = math.clamp((y - minPointLocal.y) / denom, 0f, 1.0f);
 
             }
             idx = 0;
@@ -417,6 +381,7 @@ namespace GaussianSplatting.Runtime
             createAssetBgJobHandle.Complete();
         }
 
+        //TODO: extract debug function
         private void CreateOrUpdateRuntimeMarkers()
         {
             // create marker helper
@@ -459,6 +424,7 @@ namespace GaussianSplatting.Runtime
             mr.sharedMaterial.color = col;
         }
 
+
         private void InitializeFullMode()
         {
 
@@ -483,45 +449,7 @@ namespace GaussianSplatting.Runtime
 
                 vertexSet.Add(i0); vertexSet.Add(i1); vertexSet.Add(i2);
 
-
-                if (v0y < minY)
-                {
-                    minPointWorld = v0;
-                    minPointLocal = originalVertices[i0];
-                    minY = v0y;
-                }
-                if (v1y < minY)
-                {
-                    minPointWorld = v1;
-                    minPointLocal = originalVertices[i1];
-                    minY = v1y;
-                }
-                if (v2y < minY)
-                {
-                    minPointWorld = v2;
-                    minPointLocal = originalVertices[i2];
-                    minY = v2y;
-                }
-                //max
-
-                if (v0y > maxY)
-                {
-                    maxPointWorld = v0;
-                    maxPointLocal = originalVertices[i0];
-                    maxY = v0y;
-                }
-                if (v1y > maxY)
-                {
-                    maxPointWorld = v1;
-                    maxPointLocal = originalVertices[i1];
-                    maxY = v1y;
-                }
-                if (v2y > maxY)
-                {
-                    maxPointWorld = v2;
-                    maxPointLocal = originalVertices[i2];
-                    maxY = v2y;
-                }
+                UpdateMinMaxMeshMargins(v0, v1, v2, originalVertices[i0], originalVertices[i1], originalVertices[i2], ref minPointWorld, ref maxPointWorld, ref minPointLocal, ref maxPointLocal, ref minY, ref maxY);
 
 
             }
@@ -566,41 +494,9 @@ namespace GaussianSplatting.Runtime
 
             CreateAsset();
         }
-        private void RegisterNativeCleanup(Action cleanupAction)
-        {
-            if (cleanupAction != null) _deferredCleanup.Add(cleanupAction);
-        }
-
-        private void RunDeferredCleanup()
-        {
-            for (int i = _deferredCleanup.Count - 1; i >= 0; --i)
-            {
-                try { _deferredCleanup[i]?.Invoke(); }
-                catch (Exception e) { Debug.LogWarning($"Cleanup action failed: {e.Message}"); }
-            }
-            _deferredCleanup.Clear();
-        }
-
-        bool IsPointInsideOBB(Transform boxTransform, Vector3 point)
-        {
-
-            MeshFilter meshFilter = boxTransform.GetComponent<MeshFilter>();
-            if (meshFilter == null || meshFilter.sharedMesh == null)
-                return false;
-
-            Bounds localBounds = meshFilter.sharedMesh.bounds;
-
-            Vector3 localPoint = boxTransform.InverseTransformPoint(point);
-
-            Vector3 halfSize = localBounds.extents;
-            return Mathf.Abs(localPoint.x) <= halfSize.x &&
-                   Mathf.Abs(localPoint.y) <= halfSize.y &&
-                   Mathf.Abs(localPoint.z) <= halfSize.z;
-        }
-
-
         void Update()
         {
+
 
             if (isCreateAssetJobActive)
             {
@@ -680,8 +576,9 @@ namespace GaussianSplatting.Runtime
 
             }
 
+            //TODO: check how we can optimaze it
             deformingMesh.SetVertices(displacedVertices);
-            // deformingMesh.RecalculateNormals();
+
 
             if (!isCreateAssetJobActive && needsRebuild)
             {
@@ -728,16 +625,107 @@ namespace GaussianSplatting.Runtime
                 isCreateAssetJobActive = true;
                 needsRebuild = false; // reset until something changes next
             }
-
-
-
         }
 
-        private void OnDrawGizmos()
+
+        private void RegisterNativeCleanup(Action cleanupAction)
+        {
+            if (cleanupAction != null) _deferredCleanup.Add(cleanupAction);
+        }
+
+        private void RunDeferredCleanup()
+        {
+            for (int i = _deferredCleanup.Count - 1; i >= 0; --i)
+            {
+                try { _deferredCleanup[i]?.Invoke(); }
+                catch (Exception e) { Debug.LogWarning($"Cleanup action failed: {e.Message}"); }
+            }
+            _deferredCleanup.Clear();
+        }
+
+        bool IsPointInsideOBB(Transform boxTransform, Vector3 point)
         {
 
+            MeshFilter meshFilter = boxTransform.GetComponent<MeshFilter>();
+            if (meshFilter == null || meshFilter.sharedMesh == null)
+                return false;
+
+            Bounds localBounds = meshFilter.sharedMesh.bounds;
+
+            Vector3 localPoint = boxTransform.InverseTransformPoint(point);
+
+            Vector3 halfSize = localBounds.extents;
+            return Mathf.Abs(localPoint.x) <= halfSize.x &&
+                   Mathf.Abs(localPoint.y) <= halfSize.y &&
+                   Mathf.Abs(localPoint.z) <= halfSize.z;
+        }
+        private void UpdateMinMaxMeshMargins(
+      Vector3 v0, Vector3 v1, Vector3 v2,
+         Vector3 local0, Vector3 local1, Vector3 local2,
+         ref Vector3 minPointWorld, ref Vector3 maxPointWorld,
+         ref Vector3 minPointLocal, ref Vector3 maxPointLocal, ref float minY, ref float maxY)
+        {
+
+            if (v0.y < minY)
+            {
+                minPointWorld = v0;
+                minPointLocal = local0;
+                minY = v0.y;
+            }
+            if (v1.y < minY)
+            {
+                minPointWorld = v1;
+                minPointLocal = local1;
+                minY = v1.y;
+            }
+            if (v2.y < minY)
+            {
+                minPointWorld = v2;
+                minPointLocal = local2;
+                minY = v2.y;
+            }
+
+            if (v0.y > maxY)
+            {
+                maxPointWorld = v0;
+                maxPointLocal = local0;
+                maxY = v0.y;
+            }
+            if (v1.y > maxY)
+            {
+                maxPointWorld = v1;
+                maxPointLocal = local1;
+                maxY = v1.y;
+            }
+            if (v2.y > maxY)
+            {
+                maxPointWorld = v2;
+                maxPointLocal = local2;
+                maxY = v2.y;
+            }
         }
 
+        void ProcessDeformationInput()
+        {
+
+            if (isPressed)
+            {
+                var springJob = new VertexPressJobSelected
+                {
+                    deltaTime = Time.deltaTime,
+                    uniformScale = uniformScale,
+                    damageMultiplier = 2.5f,
+                    displacedVertices = displacedVertices,
+                    originalVertices = originalVertices,
+                    vertexVelocities = vertexVelocities,
+                    selectedVertexIndices = selectedVertexIndices
+                };
+                JobHandle handle = springJob.Schedule(selectedVertexIndices.Length, 64);
+                handle.Complete();
+                isPressed = false;
+                needsRebuild = true;
+            }
+        }
 
         private void OnDestroy()
         {
@@ -954,25 +942,7 @@ namespace GaussianSplatting.Runtime
             const float kVelEpsSq = 1e-10f;  // tiny velocity^2
 
             public void Execute(int index)
-            {/*
-                int i = selectedVertexIndices[index];
-                float w = selectedVertexWeights[index];
-
-                float3 velocity = vertexVelocities[i];
-
-                float3 localPos = displacedVertices[i];
-
-
-                if (velocity.x != 0f && velocity.y != 0f && velocity.z != 0f)
-                {
-                    float3 displacement = (displacedVertices[i] - originalVertices[i]) * uniformScale;
-                    velocity -= displacement * springForce * w * deltaTime;
-                    velocity *= 1f - damping * deltaTime;
-                    vertexVelocities[i] = velocity * w;
-                    displacedVertices[i] += velocity * w * (deltaTime / uniformScale);
-
-                }
-                 */
+            {
                 int i = selectedVertexIndices[index];
                 float w = selectedVertexWeights[index];
 
@@ -1005,6 +975,27 @@ namespace GaussianSplatting.Runtime
 
                 }
 
+            }
+        }
+
+        [BurstCompile]
+        public struct VertexPressJobSelected : IJobParallelFor
+        {
+            public float deltaTime;
+            public float uniformScale;
+            public float damageMultiplier;
+
+            [NativeDisableParallelForRestriction] public NativeArray<float3> displacedVertices;
+            [NativeDisableParallelForRestriction] public NativeArray<float3> originalVertices;
+            [NativeDisableParallelForRestriction] public NativeArray<float3> vertexVelocities;
+            [ReadOnly] public NativeArray<int> selectedVertexIndices;
+
+            public void Execute(int index)
+            {
+                int i = selectedVertexIndices[index];
+
+                float3 deform = damageMultiplier * vertexVelocities[i];
+                displacedVertices[i] -= deform * (deltaTime);
 
             }
         }
@@ -1080,44 +1071,54 @@ namespace GaussianSplatting.Runtime
             }
         }
 
-        private const float SLEEPING_THRESHOLD_SQR = 0.0001f * 0.0001f;
-
         [BurstCompile]
-        struct AddStretchForceJobSelected : IJobParallelFor
+        struct AddPressForceJobSelected : IJobParallelFor
         {
 
             [NativeDisableParallelForRestriction] public NativeArray<float3> displacedVertices;
             [NativeDisableParallelForRestriction] public NativeArray<float3> originalVertices;
+
             [NativeDisableParallelForRestriction] public NativeArray<float3> vertexVelocities;
 
             [ReadOnly] public NativeArray<int> selectedVertexIndices;
-            [ReadOnly] public Vector3 currPos;
-            [ReadOnly] public Vector3 prevPos;
 
+            [ReadOnly] public Vector3 pointLocal;
+            [ReadOnly] public float uniformScale;
             [ReadOnly] public float deltaTime;
-            [ReadOnly] public float damping;
-
-
+            [ReadOnly] public float deformRadius;
+            [ReadOnly] public float maxDeform;
+            [ReadOnly] public float damageFalloff;
 
             public void Execute(int index)
             {
                 int i = selectedVertexIndices[index];
-                var originalVertex = (float3)originalVertices[i];
+                Vector3 distanceFromCollision = displacedVertices[i] - (float3)pointLocal;
+                Vector3 distanceFromOriginal = originalVertices[i] - displacedVertices[i];
+                distanceFromCollision *= uniformScale;
+                distanceFromOriginal *= uniformScale;
 
+                float distFromCollision = distanceFromCollision.magnitude;
+                float distFromOrigin = distanceFromOriginal.magnitude;
+                if (distFromCollision < deformRadius)
+                {
+                    // Smooth falloff
+                    float falloff = 1 - (distFromCollision / deformRadius) * damageFalloff;
 
-                //   float stretchFactor = SplatAccessor.CalculateStretchFactor(originalVertex, anchorPoint, originalTop, stretchAxis);
-                var distance = Vector3.Distance(currPos, (Vector3)originalVertex);
-                float t = Mathf.Clamp01(1f - distance / 5.0f);
-                var force = t;
+                    float xDeform = pointLocal.x * falloff;
+                    float yDeform = pointLocal.y * falloff;
+                    float zDeform = pointLocal.z * falloff;
 
-                float influence = SplatAccessor.Falloff(t);
+                    xDeform = Mathf.Clamp(xDeform, 0, maxDeform);
+                    yDeform = Mathf.Clamp(yDeform, 0, maxDeform);
+                    zDeform = Mathf.Clamp(zDeform, 0, maxDeform);
 
-                // Move vertex toward anchor, but influenced by falloff
-                Vector3 direction = (currPos - (Vector3)originalVertex);
-                displacedVertices[i] = originalVertex + (float3)direction * (1f - influence);
+                    vertexVelocities[i] += new float3(xDeform, yDeform, zDeform) * deltaTime;
+
+                }
 
             }
         }
+
 
         static float Falloff(float t)
         {
@@ -1148,6 +1149,8 @@ namespace GaussianSplatting.Runtime
 
             Vector3 pointLocal = transform.InverseTransformPoint(point);
             Vector3 forceLocal = transform.InverseTransformDirection(force);
+            forceLocal = new Vector3(forceLocal.z, forceLocal.y, forceLocal.x);
+            pointLocal = new Vector3(pointLocal.z, pointLocal.y, pointLocal.x);
 
             if (IsSelectionMode())
             {
@@ -1185,50 +1188,45 @@ namespace GaussianSplatting.Runtime
         }
 
 
-        public void AddStretchingForce(Vector3 currPos, Vector3 prevPos)
+        public void AddPressForce(Vector3 point, float maxDeform, float radius, float damageFalloff)
         {
+            Vector3 pointLocal = transform.InverseTransformPoint(point);
 
             if (IsSelectionMode())
             {
-                var job = new AddStretchForceJobSelected
+                var job = new AddPressForceJobSelected
                 {
                     displacedVertices = displacedVertices,
                     originalVertices = originalVertices,
                     vertexVelocities = vertexVelocities,
-                    currPos = currPos,
-                    prevPos = prevPos,
-
-
+                    maxDeform = maxDeform,
+                    damageFalloff = damageFalloff,
+                    deformRadius = radius,
+                    uniformScale = uniformScale,
                     selectedVertexIndices = selectedVertexIndices,
-
                     deltaTime = Time.deltaTime,
-                    damping = damping,
-
-
+                    pointLocal = pointLocal
                 };
 
                 JobHandle handle = job.Schedule(selectedVertexIndices.Length, 64);
                 handle.Complete();
             }
 
-
+            isPressed = true;
 
         }
-
 
 
         unsafe void CreateAsset()
         {
             if (creator != null && gaussianGaMeSSplatAsset)
             {
+
                 var newAsset = creator.CreateAsset("new asset", inputSplatsData, gaussianGaMeSSplatAsset.alphaData, gaussianGaMeSSplatAsset.scaleData, gaussianGaMeSSplatAsset.pointCloudPath);
                 _splatRenderer.InjectAsset(newAsset);
 
             }
         }
-
-
-
 
 
         NativeArray<float3> CreateXYZData(NativeArray<float3> alphas, NativeArray<float3> vertices, int numTriangles, int numPtsEachTriangle)
@@ -1318,8 +1316,6 @@ namespace GaussianSplatting.Runtime
 
             return (rotations, scalings);
         }
-
-
 
 
 
@@ -1502,102 +1498,6 @@ namespace GaussianSplatting.Runtime
                 Scalings[index] = scaleVec;
             }
         }
-
-
-        [BurstCompile]
-        struct LinearizeDataJob : IJobParallelFor
-        {
-            public NativeArray<InputSplatRuntimeData> splatData;
-            public void Execute(int index)
-            {
-                var splat = splatData[index];
-
-                // rot
-                var q = splat.rot;
-                var qq = GaussianUtils.NormalizeSwizzleRotation(new float4(q.x, q.y, q.z, q.w));
-                qq = GaussianUtils.PackSmallest3Rotation(qq);
-                splat.rot = new Quaternion(qq.x, qq.y, qq.z, qq.w);
-
-                // scale
-                splat.scale = GaussianUtils.LinearScale(splat.scale);
-
-                splatData[index] = splat;
-            }
-        }
-
-
-        static void ReorderMorton(NativeArray<InputSplatRuntimeData> splatData, float3 boundsMin, float3 boundsMax, GaussianSplatRenderer gs)
-        {
-
-            ReorderMortonJob order = new ReorderMortonJob
-            {
-                m_SplatData = splatData,
-                m_BoundsMin = boundsMin,
-                m_InvBoundsSize = 1.0f / (boundsMax - boundsMin),
-                m_Order = new NativeArray<(ulong, int)>(splatData.Length, Allocator.Persistent)
-            };
-            order.Schedule(splatData.Length, 4096).Complete();
-            order.m_Order.Sort(new OrderComparer());
-
-            NativeArray<InputSplatRuntimeData> copy = new(order.m_SplatData, Allocator.Persistent);
-            for (int i = 0; i < copy.Length; ++i)
-                order.m_SplatData[i] = copy[order.m_Order[i].Item2];
-            copy.Dispose();
-
-            order.m_Order.Dispose();
-        }
-
-        [BurstCompile]
-        struct CalcBoundsJob : IJob
-        {
-            [NativeDisableUnsafePtrRestriction] public unsafe float3* m_BoundsMin;
-            [NativeDisableUnsafePtrRestriction] public unsafe float3* m_BoundsMax;
-            [ReadOnly] public NativeArray<InputSplatRuntimeData> m_SplatPosData;
-
-            public unsafe void Execute()
-            {
-                float3 boundsMin = float.PositiveInfinity;
-                float3 boundsMax = float.NegativeInfinity;
-
-                for (int i = 0; i < m_SplatPosData.Length; ++i)
-                {
-                    float3 pos = m_SplatPosData[i].pos;
-                    boundsMin = math.min(boundsMin, pos);
-                    boundsMax = math.max(boundsMax, pos);
-                }
-                *m_BoundsMin = boundsMin;
-                *m_BoundsMax = boundsMax;
-            }
-        }
-
-        [BurstCompile]
-        struct ReorderMortonJob : IJobParallelFor
-        {
-            const float kScaler = (float)((1 << 21) - 1);
-            public float3 m_BoundsMin;
-            public float3 m_InvBoundsSize;
-            [ReadOnly] public NativeArray<InputSplatRuntimeData> m_SplatData;
-            public NativeArray<(ulong, int)> m_Order;
-
-            public void Execute(int index)
-            {
-                float3 pos = ((float3)m_SplatData[index].pos - m_BoundsMin) * m_InvBoundsSize * kScaler;
-                uint3 ipos = (uint3)pos;
-                ulong code = GaussianUtils.MortonEncode3(ipos);
-                m_Order[index] = (code, index);
-            }
-        }
-
-        struct OrderComparer : IComparer<(ulong, int)>
-        {
-            public int Compare((ulong, int) a, (ulong, int) b)
-            {
-                if (a.Item1 < b.Item1) return -1;
-                if (a.Item1 > b.Item1) return +1;
-                return a.Item2 - b.Item2;
-            }
-        }
-
 
         static uint EncodeQuatToNorm10(float4 v) // 32 bits: 10.10.10.2
         {
@@ -1844,7 +1744,6 @@ namespace GaussianSplatting.Runtime
         {
             return (uint)(v.x * 2047.5f) | ((uint)(v.y * 1023.5f) << 11) | ((uint)(v.z * 2047.5f) << 21);
         }
-
 
 
         public static NativeArray<float3> DecodeAlphasToNativeFloat3(byte[] fileBytes, int numFaces, int numPointsPerTriangle, Allocator allocator)

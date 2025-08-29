@@ -3,6 +3,7 @@ using GaussianSplatting.Runtime;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.XR.Interaction.Toolkit;
 
 
 public class MeshStretcherController : MonoBehaviour
@@ -14,6 +15,7 @@ public class MeshStretcherController : MonoBehaviour
     [Tooltip("Input Action for the trigger or button press (e.g., Select).")]
     public InputActionReference stretchActionReference;
 
+
     [Header("Deformation Settings")]
     [Tooltip("Offset from the hit surface along the normal to apply the force.")]
     public float forceOffset = 0.01f;
@@ -24,6 +26,9 @@ public class MeshStretcherController : MonoBehaviour
     private Vector3? lastXRHitPoint;
     bool isFirstFrameAfterClick = false;
     private float? lockedInteractionDistance;
+    public Transform rightController; // assign in Inspector
+
+    public float rayLength = 5f;
 
 
     void Awake()
@@ -45,6 +50,9 @@ public class MeshStretcherController : MonoBehaviour
     {
         stretchActionReference.action.started += OnDeformActionStarted;
         stretchActionReference.action.canceled += OnDeformActionCanceled;
+
+
+
     }
 
     void OnDisable()
@@ -67,6 +75,24 @@ public class MeshStretcherController : MonoBehaviour
 
     }
 
+    private void OnTriggerActionPerformed(InputAction.CallbackContext context)
+    {
+
+        Ray ray = new Ray(rightController.position, rightController.forward);
+        if (Physics.Raycast(ray, out RaycastHit hit, float.PositiveInfinity))
+        {
+            SplatAccessor deformerOnHit = hit.collider.GetComponentInParent<SplatAccessor>();
+            if (deformerOnHit != null)
+            {
+
+                deformerOnHit.AddPressForce(hit.point, 1.5f, 1.5f, 1.5f);
+            }
+
+
+        }
+
+    }
+
     private void OnDeformActionCanceled(InputAction.CallbackContext context)
     {
         actionHeld = false;
@@ -77,8 +103,11 @@ public class MeshStretcherController : MonoBehaviour
         ResetDeformationState();
     }
 
+
+
     void Update()
     {
+
         if (actionHeld)
         {
             ProcessRayInteraction();
@@ -142,7 +171,7 @@ public class MeshStretcherController : MonoBehaviour
                 }
 
                 // Build world force
-                Vector3 worldForce = worldDrag.sqrMagnitude >= 0.001 ? worldDrag * dragStrength * triggerValue : Vector3.zero;
+                Vector3 worldForce = worldDrag * dragStrength * triggerValue;
 
 
                 currentDeformer.AddDeformingForce(currentVirtualPointWorld, worldForce);

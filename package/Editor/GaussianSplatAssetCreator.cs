@@ -670,7 +670,7 @@ namespace GaussianSplatting.Editor
 
         public static List<Vector3> GetMeshFaceVertices(Mesh mesh, Transform meshTransform)
         {
-            Vector3[] vertices = mesh.vertices;
+            Vector3[] vertices = TransformVertices(mesh.vertices);
 
             List<Vector3> faceVerticesList = new List<Vector3>();
             var triangles = mesh.triangles;
@@ -699,9 +699,10 @@ namespace GaussianSplatting.Editor
             for (int i = 0; i < vertices.Length; i++)
             {
                 transformedVertices[i] = new Vector3(
-                    vertices[i].x,
-                    -vertices[i].z,
-                vertices[i].y
+                    -vertices[i].x,
+                    vertices[i].y,
+                    vertices[i].z
+
                 );
             }
 
@@ -902,7 +903,7 @@ namespace GaussianSplatting.Editor
 
                 colors.Add(color);
             }
-            // Debug.Log($"Finished generating colors. Total colors created: {colors.Count}");
+
             return colors;
         }
 
