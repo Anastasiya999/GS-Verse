@@ -685,8 +685,8 @@ namespace GaussianSplatting.Editor
                 Vector3 v2 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 2]]);
 
                 faceVerticesList.Add(v0);
-                faceVerticesList.Add(v1);
                 faceVerticesList.Add(v2);
+                faceVerticesList.Add(v1);
             }
 
             return faceVerticesList;

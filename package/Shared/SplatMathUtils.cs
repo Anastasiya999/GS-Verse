@@ -229,8 +229,8 @@ namespace GaussianSplatting.Shared
                 int i2 = triangles[baseIdx + 2];
 
                 faceVertices[i * 3 + 0] = (vertices[i0]);
-                faceVertices[i * 3 + 1] = (vertices[i1]);
-                faceVertices[i * 3 + 2] = (vertices[i2]);
+                faceVertices[i * 3 + 1] = (vertices[i2]);
+                faceVertices[i * 3 + 2] = (vertices[i1]);
             }
 
             return faceVertices;
