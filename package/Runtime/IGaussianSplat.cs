@@ -8,14 +8,11 @@ namespace GaussianSplatting.Runtime
         string name { get; }
         int splatCount { get; }
         IGaussianSplatData posData { get; }
-
         IGaussianSplatData otherData { get; }
         IGaussianSplatData shData { get; }
         IGaussianSplatData colorData { get; }
         IGaussianSplatData chunkData { get; }
-        string pointCloudPath { get; }
-        TextAsset alphaData { get; }
-        TextAsset scaleData { get; }
+
         Vector3 boundsMin { get; }
         Vector3 boundsMax { get; }
         GaussianSplatAsset.VectorFormat posFormat { get; }
@@ -25,7 +22,6 @@ namespace GaussianSplatting.Runtime
         Hash128 dataHash { get; }
         int formatVersion { get; }
         GaussianSplatAsset.CameraInfo[] cameras { get; }
-
         void Dispose();
     }
 
@@ -35,4 +31,6 @@ namespace GaussianSplatting.Runtime
         byte[] bytes { get; }
         NativeArray<T> GetData<T>() where T : struct;
     }
+
+
 }

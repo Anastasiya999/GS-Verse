@@ -18,11 +18,31 @@ namespace GaussianSplatting.Runtime
         public const int kTextureWidth = 2048; // allows up to 32M splats on desktop GPU (2k width x 16k height)
         public const int kMaxSplats = 8_600_000; // mostly due to 2GB GPU buffer size limit when exporting a splat (2GB / 248B is just over 8.6M)
 
-        [SerializeField] int m_FormatVersion;
-        [SerializeField] int m_SplatCount;
-        [SerializeField] Vector3 m_BoundsMin;
-        [SerializeField] Vector3 m_BoundsMax;
+        [SerializeField] protected int m_FormatVersion;
+        [SerializeField] protected int m_SplatCount;
+        [SerializeField] protected Vector3 m_BoundsMin;
+        [SerializeField] protected Vector3 m_BoundsMax;
         [SerializeField] Hash128 m_DataHash;
+        [SerializeField] protected VectorFormat m_PosFormat = VectorFormat.Norm11;
+        [SerializeField] protected VectorFormat m_ScaleFormat = VectorFormat.Norm11;
+        [SerializeField] protected SHFormat m_SHFormat = SHFormat.Norm11;
+        [SerializeField] protected ColorFormat m_ColorFormat;
+
+        [SerializeField] protected TextAsset m_PosData;
+        [SerializeField] protected TextAsset m_ColorData;
+        [SerializeField] protected TextAsset m_OtherData;
+        [SerializeField] protected TextAsset m_SHData;
+        // Chunk data is optional (if data formats are fully lossless then there's no chunking)
+        [SerializeField] protected TextAsset m_ChunkData;
+        [SerializeField] protected CameraInfo[] m_Cameras;
+
+
+        private GaussianSplatData m_SplatPosData;
+        private GaussianSplatData m_SplatColorData;
+        private GaussianSplatData m_SplatOtherData;
+        private GaussianSplatData m_SplatSHData;
+        private GaussianSplatData m_SplatChunkData;
+
 
         public int formatVersion => m_FormatVersion;
         public int splatCount => m_SplatCount;
@@ -30,7 +50,58 @@ namespace GaussianSplatting.Runtime
         public Vector3 boundsMax => m_BoundsMax;
         public Hash128 dataHash => m_DataHash;
 
-        public bool isGaMeS_asset => m_AlphaData != null && m_ScaleData != null;
+        public VectorFormat posFormat => m_PosFormat;
+        public VectorFormat scaleFormat => m_ScaleFormat;
+        public SHFormat shFormat => m_SHFormat;
+        public ColorFormat colorFormat => m_ColorFormat;
+        public CameraInfo[] cameras => m_Cameras;
+
+
+        public IGaussianSplatData posData
+        {
+            get
+            {
+                if (m_SplatPosData == null)
+                    m_SplatPosData = new GaussianSplatData(m_PosData);
+                return m_SplatPosData;
+            }
+        }
+        public IGaussianSplatData colorData
+        {
+            get
+            {
+                if (m_SplatColorData == null)
+                    m_SplatColorData = new GaussianSplatData(m_ColorData);
+                return m_SplatColorData;
+            }
+        }
+        public IGaussianSplatData otherData
+        {
+            get
+            {
+                if (m_SplatOtherData == null)
+                    m_SplatOtherData = new GaussianSplatData(m_OtherData);
+                return m_SplatOtherData;
+            }
+        }
+        public IGaussianSplatData shData
+        {
+            get
+            {
+                if (m_SplatSHData == null)
+                    m_SplatSHData = new GaussianSplatData(m_SHData);
+                return m_SplatSHData;
+            }
+        }
+        public IGaussianSplatData chunkData
+        {
+            get
+            {
+                if (m_SplatChunkData == null)
+                    m_SplatChunkData = new GaussianSplatData(m_ChunkData);
+                return m_SplatChunkData;
+            }
+        }
 
         // Match VECTOR_FMT_* in HLSL
         public enum VectorFormat
@@ -41,35 +112,12 @@ namespace GaussianSplatting.Runtime
             Norm6   // 2 bytes: 6.5.5
         }
 
-        public static int GetVectorSize(VectorFormat fmt)
-        {
-            return fmt switch
-            {
-                VectorFormat.Float32 => 12,
-                VectorFormat.Norm16 => 6,
-                VectorFormat.Norm11 => 4,
-                VectorFormat.Norm6 => 2,
-                _ => throw new ArgumentOutOfRangeException(nameof(fmt), fmt, null)
-            };
-        }
-
         public enum ColorFormat
         {
             Float32x4,
             Float16x4,
             Norm8x4,
             BC7,
-        }
-        public static int GetColorSize(ColorFormat fmt)
-        {
-            return fmt switch
-            {
-                ColorFormat.Float32x4 => 16,
-                ColorFormat.Float16x4 => 8,
-                ColorFormat.Norm8x4 => 4,
-                ColorFormat.BC7 => 1,
-                _ => throw new ArgumentOutOfRangeException(nameof(fmt), fmt, null)
-            };
         }
 
         public enum SHFormat
@@ -83,6 +131,64 @@ namespace GaussianSplatting.Runtime
             Cluster16k,
             Cluster8k,
             Cluster4k,
+        }
+
+        public struct ChunkInfo
+        {
+            public uint colR, colG, colB, colA;
+            public float2 posX, posY, posZ;
+            public uint sclX, sclY, sclZ;
+            public uint shR, shG, shB;
+        }
+
+        [Serializable]
+        public struct CameraInfo
+        {
+            public Vector3 pos;
+            public Vector3 axisX, axisY, axisZ;
+            public float fov;
+        }
+        public class GaussianSplatData : IGaussianSplatData
+        {
+            public TextAsset m_Asset;
+
+            public GaussianSplatData(TextAsset asset)
+            {
+                m_Asset = asset;
+            }
+
+            public long dataSize => m_Asset.dataSize;
+
+            public byte[] bytes => m_Asset.bytes;
+
+            public NativeArray<T> GetData<T>() where T : struct
+            {
+                return m_Asset.GetData<T>();
+            }
+        }
+        public static int GetVectorSize(VectorFormat fmt)
+        {
+            return fmt switch
+            {
+                VectorFormat.Float32 => 12,
+                VectorFormat.Norm16 => 6,
+                VectorFormat.Norm11 => 4,
+                VectorFormat.Norm6 => 2,
+                _ => throw new ArgumentOutOfRangeException(nameof(fmt), fmt, null)
+            };
+        }
+
+
+        public static int GetColorSize(ColorFormat fmt)
+        {
+            return fmt switch
+            {
+                ColorFormat.Float32x4 => 16,
+                ColorFormat.Float16x4 => 8,
+                ColorFormat.Norm8x4 => 4,
+                ColorFormat.BC7 => 1,
+                _ => throw new ArgumentOutOfRangeException(nameof(fmt), fmt, null)
+            };
         }
 
         public struct SHTableItemFloat32
@@ -106,7 +212,7 @@ namespace GaussianSplatting.Runtime
         }
 
 
-        public void Initialize(int splats, VectorFormat formatPos, VectorFormat formatScale, ColorFormat formatColor, SHFormat formatSh, Vector3 bMin, Vector3 bMax, CameraInfo[] cameraInfos, string pointCloudPath)
+        public void Initialize(int splats, VectorFormat formatPos, VectorFormat formatScale, ColorFormat formatColor, SHFormat formatSh, Vector3 bMin, Vector3 bMax, CameraInfo[] cameraInfos)
         {
             m_SplatCount = splats;
             m_FormatVersion = kCurrentVersion;
@@ -117,19 +223,6 @@ namespace GaussianSplatting.Runtime
             m_Cameras = cameraInfos;
             m_BoundsMin = bMin;
             m_BoundsMax = bMax;
-            m_PointCloudPath = pointCloudPath;
-        }
-
-        Hash128 ComputeHashFromNativeArray(NativeArray<uint> data)
-        {
-            byte[] byteArray = new byte[data.Length * sizeof(uint)];
-            System.Buffer.BlockCopy(data.ToArray(), 0, byteArray, 0, byteArray.Length);
-            return Hash128.Compute(Convert.ToBase64String(byteArray)); // use string overload
-        }
-
-        Hash128 ComputeHash(byte[] data)
-        {
-            return Hash128.Compute(data);
         }
 
         public void SetDataHash(Hash128 hash)
@@ -137,12 +230,11 @@ namespace GaussianSplatting.Runtime
             m_DataHash = hash;
         }
 
-        public void SetAssetFiles(TextAsset dataChunk, TextAsset dataPos, TextAsset dataOther, TextAsset dataColor, TextAsset dataSh, TextAsset dataAlpha = null, TextAsset dataScale = null)
+
+        public void SetAssetFiles(TextAsset dataChunk, TextAsset dataPos, TextAsset dataOther, TextAsset dataColor, TextAsset dataSh)
         {
             m_ChunkData = dataChunk;
             m_PosData = dataPos;
-            m_AlphaData = dataAlpha;
-            m_ScaleData = dataScale;
             m_OtherData = dataOther;
             m_ColorData = dataColor;
             m_SHData = dataSh;
@@ -223,136 +315,10 @@ namespace GaussianSplatting.Runtime
             return chunkCount * UnsafeUtility.SizeOf<ChunkInfo>();
         }
 
-        [SerializeField] VectorFormat m_PosFormat = VectorFormat.Norm11;
-        [SerializeField] VectorFormat m_ScaleFormat = VectorFormat.Norm11;
-        [SerializeField] SHFormat m_SHFormat = SHFormat.Norm11;
-        [SerializeField] ColorFormat m_ColorFormat;
-
-        [SerializeField] TextAsset m_PosData;
-
-        [SerializeField] TextAsset m_AlphaData;
-        [SerializeField] TextAsset m_ScaleData;
-        [SerializeField] TextAsset m_ColorData;
-        [SerializeField] TextAsset m_OtherData;
-        [SerializeField] TextAsset m_SHData;
-        // Chunk data is optional (if data formats are fully lossless then there's no chunking)
-        [SerializeField] TextAsset m_ChunkData;
-
-        [SerializeField] CameraInfo[] m_Cameras;
-
-
-        private GaussianSplatData m_SplatPosData;
-        private GaussianSplatData m_SplatColorData;
-        private GaussianSplatData m_SplatOtherData;
-        private GaussianSplatData m_SplatSHData;
-        private GaussianSplatData m_SplatChunkData;
-        private GaussianSplatData m_SplatAlphaData;
-        private GaussianSplatData m_SplatScaleData;
-
-
-        [SerializeField] List<List<List<float>>> m_alphas;
-        [SerializeField] string m_PointCloudPath;
-
-        public VectorFormat posFormat => m_PosFormat;
-        public VectorFormat scaleFormat => m_ScaleFormat;
-        public SHFormat shFormat => m_SHFormat;
-        public ColorFormat colorFormat => m_ColorFormat;
-
-        public TextAsset alphaData => m_AlphaData;
-        public TextAsset scaleData => m_ScaleData;
-        public string pointCloudPath => m_PointCloudPath;
-
-        public IGaussianSplatData posData
-        {
-            get
-            {
-                if (m_SplatPosData == null)
-                    m_SplatPosData = new GaussianSplatData(m_PosData);
-                return m_SplatPosData;
-            }
-        }
-        public IGaussianSplatData colorData
-        {
-            get
-            {
-                if (m_SplatColorData == null)
-                    m_SplatColorData = new GaussianSplatData(m_ColorData);
-                return m_SplatColorData;
-            }
-        }
-        public IGaussianSplatData otherData
-        {
-            get
-            {
-                if (m_SplatOtherData == null)
-                    m_SplatOtherData = new GaussianSplatData(m_OtherData);
-                return m_SplatOtherData;
-            }
-        }
-        public IGaussianSplatData shData
-        {
-            get
-            {
-                if (m_SplatSHData == null)
-                    m_SplatSHData = new GaussianSplatData(m_SHData);
-                return m_SplatSHData;
-            }
-        }
-        public IGaussianSplatData chunkData
-        {
-            get
-            {
-                if (m_SplatChunkData == null)
-                    m_SplatChunkData = new GaussianSplatData(m_ChunkData);
-                return m_SplatChunkData;
-            }
-        }
-
-
-
         public void Dispose()
         {
             // Dispose of any resources if needed
         }
 
-
-        public CameraInfo[] cameras => m_Cameras;
-
-        public List<List<List<float>>> alphas => m_alphas;
-
-        public struct ChunkInfo
-        {
-            public uint colR, colG, colB, colA;
-            public float2 posX, posY, posZ;
-            public uint sclX, sclY, sclZ;
-            public uint shR, shG, shB;
-        }
-
-        [Serializable]
-        public struct CameraInfo
-        {
-            public Vector3 pos;
-            public Vector3 axisX, axisY, axisZ;
-            public float fov;
-        }
-
-        public class GaussianSplatData : IGaussianSplatData
-        {
-            public TextAsset m_Asset;
-
-            public GaussianSplatData(TextAsset asset)
-            {
-                m_Asset = asset;
-            }
-
-            public long dataSize => m_Asset.dataSize;
-
-            public byte[] bytes => m_Asset.bytes;
-
-            public NativeArray<T> GetData<T>() where T : struct
-            {
-                return m_Asset.GetData<T>();
-            }
-        }
     }
 }

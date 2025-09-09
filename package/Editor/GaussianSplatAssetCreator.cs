@@ -31,10 +31,12 @@ namespace GaussianSplatting.Editor
         // --- Member Variables (State) ---
         private InputMode m_SelectedMode = InputMode.GaMeS;
 
+
         // File pickers and input paths
         readonly FilePickerControl m_FilePicker = new();
         [SerializeField] string m_InputFile;
         [SerializeField] string m_InputPointCloudFile;
+        [SerializeField] string m_MeshResourcePath;
         [SerializeField] string m_InputJsonFile;
         [SerializeField] GameObject m_SelectedSceneObject;
 
@@ -42,6 +44,7 @@ namespace GaussianSplatting.Editor
         [SerializeField] string m_OutputFolder = "Assets/GaussianAssets";
         [SerializeField] DataQuality m_Quality = DataQuality.Medium;
         private bool m_ImportCameras = true;
+        private bool m_isBlenderMesh = false;
 
         // Format settings
         [SerializeField] GaussianSplatAsset.VectorFormat m_FormatPos;
@@ -224,57 +227,6 @@ namespace GaussianSplatting.Editor
             return newSplats;
         }
 
-        string GetFaceKey(Vector3 v0, Vector3 v1, Vector3 v2)
-        {
-            // Convert from Unity to trimesh coordinate system (negate the x-coordinate)
-            Vector3 cv0 = new Vector3(v0.x, v0.y, v0.z);
-            Vector3 cv1 = new Vector3(v1.x, v1.y, v1.z);
-            Vector3 cv2 = new Vector3(v2.x, v2.y, v2.z);
-
-            // Extract all coordinates into a single list
-            float[] coordinates = new float[]
-            {
-            Mathf.Abs(cv0.x), Mathf.Abs(cv0.y), Mathf.Abs(cv0.z),
-            Mathf.Abs(cv1.x), Mathf.Abs(cv1.y), Mathf.Abs(cv1.z),
-            Mathf.Abs(cv2.x), Mathf.Abs(cv2.y), Mathf.Abs(cv2.z)
-            };
-
-            // Sort all coordinates in ascending order
-            Array.Sort(coordinates);
-
-            // Quantize the sorted coordinates
-            string[] keyComponents = new string[coordinates.Length];
-            for (int i = 0; i < coordinates.Length; i++)
-            {
-                keyComponents[i] = Quantize(coordinates[i]).ToString();
-            }
-
-            // Join the components into a single key
-            string key = string.Join("_", keyComponents);
-            return key;
-        }
-
-        string Quantize(float value)
-        {
-            float scale = Mathf.Pow(10, precision);
-            float rounded = Mathf.Round(value * scale) / scale;
-
-            // Build a format string that always displays at least one decimal digit.
-            // For example, if precision is 5, the format becomes "0.0####".
-            string format;
-            if (precision > 0)
-            {
-                // Force one decimal digit, then allow up to (precision - 1) optional decimals.
-                format = "0.0" + new string('#', precision - 1);
-            }
-            else
-            {
-                format = "0";
-            }
-
-            return rounded.ToString(format);
-        }
-
 
         unsafe (List<List<List<float>>> alphas, List<List<float>> scales) LoadModelParams(string modelParamsPath)
         {
@@ -304,11 +256,11 @@ namespace GaussianSplatting.Editor
         }
 
 
-
         unsafe void CreateGaMeSAsset()
         {
             m_ErrorMessage = null;
-            if (string.IsNullOrWhiteSpace(m_InputFile))
+            // --- 1. Input validation ---
+            if (m_isBlenderMesh && string.IsNullOrWhiteSpace(m_InputFile))
             {
                 m_ErrorMessage = $"Select input mesh PLY file";
                 return;
@@ -325,24 +277,44 @@ namespace GaussianSplatting.Editor
                 m_ErrorMessage = $"Output folder must be within project, was '{m_OutputFolder}'";
                 return;
             }
+
+            if (!m_isBlenderMesh && string.IsNullOrWhiteSpace(m_MeshResourcePath))
+            {
+                m_ErrorMessage = $"Provide path obj file";
+                return;
+            }
+
             Directory.CreateDirectory(m_OutputFolder);
 
+            // --- 2. Load camera data ---
             EditorUtility.DisplayProgressBar(kProgressTitle, "Reading data files", 0.0f);
             GaussianSplatAsset.CameraInfo[] cameras = LoadJsonCamerasFile(m_InputPointCloudFile, m_ImportCameras);
 
-            //create object
-            //var gameObject = CreateGameObjectFromPly(m_InputFile, m_SelectedSceneObject);
-            var gameObject = m_SelectedSceneObject;
+            // --- 3. Load mesh object ---
+            Mesh mesh;
+            Transform meshTransform;
+            if (m_isBlenderMesh)
+            {
+                var gameObject = CreateGameObjectFromPly(m_InputFile, m_SelectedSceneObject);
+                mesh = gameObject.GetComponent<MeshFilter>().sharedMesh;
+                meshTransform = gameObject.GetComponent<MeshFilter>().transform;
+            }
+            else
+            {
+
+                mesh = Resources.Load<GameObject>(m_MeshResourcePath).transform.GetChild(0).GetComponent<MeshFilter>().sharedMesh;
+                meshTransform = Resources.Load<GameObject>(m_MeshResourcePath).transform;
+
+            }
+
+            // --- 4. Load model params ---
             var (alphas, scales) = LoadModelParams(m_InputJsonFile);
-
             var normalizedAlpha = NormalizeAlphas(alphas);
+            var numberOfSplatsPerFace = normalizedAlpha[0].Count;
 
-            using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(normalizedAlpha, scales, gameObject, 9);
+            using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(normalizedAlpha, scales, mesh, meshTransform, 9, numberOfSplatsPerFace);
             //We need to linearize our splats before ReplaceSplatData because LoadInputSplatFile do that
-
-
             using NativeArray<InputSplatData> inputSplatsColored = LoadPLYSplatFile(m_InputPointCloudFile);
-
             using NativeArray<InputSplatData> inputSplatsWithColors = ReplaceSplatData(inputSplats, inputSplatsColored);
 
 
@@ -352,6 +324,7 @@ namespace GaussianSplatting.Editor
                 return;
             }
 
+            // --- 5. Calculate bounds ---
             float3 boundsMin, boundsMax;
             var boundsJob = new CalcBoundsJob
             {
@@ -361,9 +334,11 @@ namespace GaussianSplatting.Editor
             };
             boundsJob.Schedule().Complete();
 
+            // --- 6. Morton reordering ---
             EditorUtility.DisplayProgressBar(kProgressTitle, "Morton reordering", 0.05f);
             ReorderMorton(inputSplatsWithColors, boundsMin, boundsMax);
 
+            // --- 7. SH Clustering (if needed) ---
             NativeArray<int> splatSHIndices = default;
             NativeArray<GaussianSplatAsset.SHTableItemFloat16> clusteredSHs = default;
             if (m_FormatSH >= GaussianSplatAsset.SHFormat.Cluster64k)
@@ -372,14 +347,18 @@ namespace GaussianSplatting.Editor
                 ClusterSHs(inputSplatsWithColors, m_FormatSH, out clusteredSHs, out splatSHIndices);
             }
 
-            string baseName = Path.GetFileNameWithoutExtension(FilePickerControl.PathToDisplayString(m_InputFile));
+            // --- 8. Create asset ---
+            string baseName = Path.GetFileNameWithoutExtension(FilePickerControl.PathToDisplayString(m_InputPointCloudFile));
 
             EditorUtility.DisplayProgressBar(kProgressTitle, "Creating data objects", 0.7f);
-            GaussianSplatAsset asset = ScriptableObject.CreateInstance<GaussianSplatAsset>();
+            GaussianGaMeSSplatAsset asset = CreateInstance<GaussianGaMeSSplatAsset>();
             asset.Initialize(inputSplatsWithColors.Length, m_FormatPos, m_FormatScale, m_FormatColor, m_FormatSH, boundsMin, boundsMax, cameras, m_InputPointCloudFile);
+            asset.SetObjPath(m_MeshResourcePath);
+            asset.SetNumberOfSplatsPerFace(numberOfSplatsPerFace);
             asset.name = baseName;
 
             var dataHash = new Hash128((uint)asset.splatCount, (uint)asset.formatVersion, 0, 0);
+
 
             string pathChunk = $"{m_OutputFolder}/{baseName}_chk.bytes";
             string pathAlpha = $"{m_OutputFolder}/{baseName}_alpha.bytes";
@@ -395,11 +374,11 @@ namespace GaussianSplatting.Editor
             bool useChunks = isUsingChunks;
             if (useChunks)
                 CreateChunkData(inputSplatsWithColors, pathChunk, ref dataHash);
-            Debug.Log($"First Splat Position from Create asset after reorder: {inputSplatsWithColors[0].scale} {normalizedAlpha[0][0].Count}");
+            Debug.Log($"First Splat Position from Create asset after reorder: {inputSplatsWithColors[0].scale} {numberOfSplatsPerFace}");
 
             CreatePositionsData(inputSplatsWithColors, pathPos, ref dataHash);
             CreateScaleData(scales, pathScale, ref dataHash);
-            CreateAlphasData(normalizedAlpha, pathAlpha, ref dataHash, normalizedAlpha[0][0].Count);
+            CreateAlphasData(normalizedAlpha, pathAlpha, ref dataHash, numberOfSplatsPerFace);
             CreateOtherData(inputSplatsWithColors, pathOther, ref dataHash, splatSHIndices);
             CreateColorData(inputSplatsWithColors, pathCol, ref dataHash);
             CreateSHData(inputSplatsWithColors, pathSh, ref dataHash, clusteredSHs);
@@ -466,7 +445,6 @@ namespace GaussianSplatting.Editor
         }
 
 
-
         unsafe void CreateAsset()
         {
             m_ErrorMessage = null;
@@ -517,7 +495,7 @@ namespace GaussianSplatting.Editor
 
             EditorUtility.DisplayProgressBar(kProgressTitle, "Creating data objects", 0.7f);
             GaussianSplatAsset asset = ScriptableObject.CreateInstance<GaussianSplatAsset>();
-            asset.Initialize(inputSplats.Length, m_FormatPos, m_FormatScale, m_FormatColor, m_FormatSH, boundsMin, boundsMax, cameras, m_InputFile);
+            asset.Initialize(inputSplats.Length, m_FormatPos, m_FormatScale, m_FormatColor, m_FormatSH, boundsMin, boundsMax, cameras);
             asset.name = baseName;
 
             var dataHash = new Hash128((uint)asset.splatCount, (uint)asset.formatVersion, 0, 0);
@@ -564,7 +542,7 @@ namespace GaussianSplatting.Editor
 
         void CreateScaleData(List<List<float>> scales, string filePath, ref Hash128 dataHash)
         {
-            int dataLen = scales.Count * 4;
+            int dataLen = scales.Count * GaussianSplatAsset.GetVectorSize(GaussianSplatAsset.VectorFormat.Norm11);
             int splatCount = scales.Count;
 
             NativeArray<float> flatScale = new(splatCount, Allocator.TempJob);
@@ -678,34 +656,6 @@ namespace GaussianSplatting.Editor
             return data;
         }
 
-        private void DebugInputSplats(NativeArray<InputSplatData> inputSplats)
-
-        {
-            Debug.Log($"InputSplat count {inputSplats.Length}:");
-            for (int i = 0; i < 100; i++)
-            {
-                InputSplatData splat = inputSplats[i];
-                Debug.Log($"InputSplat {i}:");
-                Debug.Log($"  Position: {splat.pos}, type {splat.pos[0].GetType()}");
-            }
-        }
-
-        //GetPositions
-        //Generate Sch
-        float3[] GenerateRandomSHs(int numPts)
-        {
-            float3[] shs = new float3[numPts];
-            for (int i = 0; i < numPts; i++)
-            {
-                shs[i] = new float3(
-                    UnityEngine.Random.value / 255.0f,
-                    UnityEngine.Random.value / 255.0f,
-                    UnityEngine.Random.value / 255.0f
-                );
-            }
-            return shs;
-        }
-
         List<Vector3> GenerateNormals(int numPts)
         {
             List<Vector3> normals = new List<Vector3>(numPts);
@@ -718,24 +668,8 @@ namespace GaussianSplatting.Editor
             return normals;
         }
 
-        public static List<Vector3> GetMeshFaceVertices(GameObject gameObject)
+        public static List<Vector3> GetMeshFaceVertices(Mesh mesh, Transform meshTransform)
         {
-            MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
-            if (meshFilter == null)
-            {
-                Debug.LogError("No MeshFilter component found on the GameObject.");
-                return null;
-            }
-
-            Mesh mesh = meshFilter.sharedMesh;
-            if (mesh == null)
-            {
-                Debug.LogError("No mesh found in the MeshFilter component.");
-                return null;
-            }
-
-
-            // Vector3[] vertices = mesh.vertices;
             Vector3[] vertices = TransformVertices(mesh.vertices);
 
             List<Vector3> faceVerticesList = new List<Vector3>();
@@ -746,13 +680,13 @@ namespace GaussianSplatting.Editor
             for (int i = 0; i < totalFaces; i++)
             {
                 int baseIndex = i * 3;
-                Vector3 v0 = vertices[triangles[baseIndex]];
-                Vector3 v1 = vertices[triangles[baseIndex + 1]];
-                Vector3 v2 = vertices[triangles[baseIndex + 2]];
+                Vector3 v0 = meshTransform.TransformPoint(vertices[triangles[baseIndex]]);
+                Vector3 v1 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 1]]);
+                Vector3 v2 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 2]]);
 
                 faceVerticesList.Add(v0);
-                faceVerticesList.Add(v1);
                 faceVerticesList.Add(v2);
+                faceVerticesList.Add(v1);
             }
 
             return faceVerticesList;
@@ -765,9 +699,10 @@ namespace GaussianSplatting.Editor
             for (int i = 0; i < vertices.Length; i++)
             {
                 transformedVertices[i] = new Vector3(
-                    vertices[i].x,
-                    -vertices[i].z,
-                vertices[i].y
+                    -vertices[i].x,
+                    vertices[i].y,
+                    vertices[i].z
+
                 );
             }
 
@@ -843,7 +778,7 @@ namespace GaussianSplatting.Editor
 
         public static float ReLU(float x)
         {
-            return math.max(0, x);// x < 0 ? 0 : x;
+            return math.max(0, x);
         }
 
 
@@ -906,10 +841,6 @@ namespace GaussianSplatting.Editor
             return (rotations, scalings);
         }
 
-        private Vector3 ProjectOnto(Vector3 v, Vector3 u)
-        {
-            return Vector3.Dot(v, u) * u;
-        }
 
         private static List<Vector3> RGB2SH(List<Vector3> rgbs)
         {
@@ -972,7 +903,7 @@ namespace GaussianSplatting.Editor
 
                 colors.Add(color);
             }
-            // Debug.Log($"Finished generating colors. Total colors created: {colors.Count}");
+
             return colors;
         }
 
@@ -1019,12 +950,11 @@ namespace GaussianSplatting.Editor
         }
 
 
-        unsafe NativeArray<InputSplatData> CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, GameObject gameObject, int maxShDegree)
+        unsafe NativeArray<InputSplatData>
+        CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, Mesh mesh, Transform meshTransform, int maxShDegree, int numOfSplatsPerFace)
         {
-            int numOfSplatsPerFace = alphas[0][0].Count;
+            var faceVertices = GetMeshFaceVertices(mesh, meshTransform);
 
-            var faceVertices = GetMeshFaceVertices(gameObject);
-            Debug.Log($"First Splat rotation from CreateSplatDataFromMemory: {alphas.Count} {faceVertices.Count}");
             List<Vector3> positions = CalculateXYZ(faceVertices, numOfSplatsPerFace, alphas);
             List<Vector3> normals = GenerateNormals(positions.Count);
             List<Vector3> colors = SH2RGB(GenerateRandomColors(positions.Count));
@@ -1935,9 +1865,16 @@ namespace GaussianSplatting.Editor
         {
             GUILayout.Label("Input Data", EditorStyles.boldLabel);
 
-            // Mesh PLY file
-            var rectMesh = EditorGUILayout.GetControlRect(true);
-            m_InputFile = m_FilePicker.PathFieldGUI(rectMesh, new GUIContent("Input Mesh PLY File"), m_InputFile, "ply", "PointCloudFile");
+            m_isBlenderMesh = EditorGUILayout.Toggle("Blender mesh", m_isBlenderMesh);
+
+
+            if (m_isBlenderMesh)
+            {
+                // Mesh PLY file
+                var rectMesh = EditorGUILayout.GetControlRect(true);
+                m_InputFile = m_FilePicker.PathFieldGUI(rectMesh, new GUIContent("Input Mesh PLY File"), m_InputFile, "ply", "PointCloudFile");
+
+            }
 
             // Point Cloud PLY file
             var rectCloud = EditorGUILayout.GetControlRect(true);
@@ -1954,8 +1891,17 @@ namespace GaussianSplatting.Editor
                 }
             }
 
+            if (!m_isBlenderMesh)
+            {
+                m_MeshResourcePath = EditorGUILayout.TextField("Path to obj", m_MeshResourcePath);
+            }
+            else
+            {
+                m_SelectedSceneObject = (GameObject)EditorGUILayout.ObjectField("Scene Object", m_SelectedSceneObject, typeof(GameObject), true);
+
+            }
+
             // Scene object
-            m_SelectedSceneObject = (GameObject)EditorGUILayout.ObjectField("Scene Object", m_SelectedSceneObject, typeof(GameObject), true);
 
             GUILayout.Label("Preprocessing", EditorStyles.boldLabel);
             m_ImportCameras = EditorGUILayout.Toggle("Import Cameras", m_ImportCameras);
@@ -2183,8 +2129,6 @@ namespace GaussianSplatting.Editor
             Vector3 v1 = mesh.vertices[mesh.triangles[0]];
             Vector3 v2 = mesh.vertices[mesh.triangles[1]];
             Vector3 v3 = mesh.vertices[mesh.triangles[2]];
-
-
 
             Debug.Log($"First face vertices from asset creator:\n{v1}\n{v2}\n{v3}");
 

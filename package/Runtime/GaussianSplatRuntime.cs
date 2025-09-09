@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-using System;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
-using Unity.Mathematics;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
 
 
 namespace GaussianSplatting.Runtime
@@ -23,6 +20,9 @@ namespace GaussianSplatting.Runtime
         Vector3 m_BoundsMin;
         Vector3 m_BoundsMax;
         Hash128 m_DataHash;
+        int m_NumberOfSplatsPerFace;
+
+        string m_ObjPath;
 
         public string name => m_Name;
         public int formatVersion => m_FormatVersion;
@@ -30,6 +30,9 @@ namespace GaussianSplatting.Runtime
         public Vector3 boundsMin => m_BoundsMin;
         public Vector3 boundsMax => m_BoundsMax;
         public Hash128 dataHash => m_DataHash;
+
+        public string objPath => m_ObjPath;
+        public int numberOfSplatsPerFace => m_NumberOfSplatsPerFace;
 
         public void Initialize(string name, int splats, GaussianSplatAsset.VectorFormat formatPos, GaussianSplatAsset.VectorFormat formatScale, GaussianSplatAsset.ColorFormat formatColor, GaussianSplatAsset.SHFormat formatSh, Vector3 bMin, Vector3 bMax, GaussianSplatAsset.CameraInfo[] cameraInfos, string pointCloudPath)
         {
@@ -49,6 +52,11 @@ namespace GaussianSplatting.Runtime
         public void SetDataHash(Hash128 hash)
         {
             m_DataHash = hash;
+        }
+
+        public void SetObjPath(string path)
+        {
+            m_ObjPath = path;
         }
 
         public void setAssetData(NativeArray<byte> dataChunk, NativeArray<byte> dataPos, NativeArray<byte> dataOther, NativeArray<byte> dataColor, NativeArray<byte> dataSh, TextAsset dataAlpha, TextAsset dataScale)
@@ -106,6 +114,8 @@ namespace GaussianSplatting.Runtime
         public TextAsset scaleData => m_SplatScaleData;
         public string pointCloudPath => m_PointCloudPath;
         public GaussianSplatAsset.CameraInfo[] cameras => m_Cameras;
+
+        public bool isGaMeS_asset => alphaData != null && scaleData != null;
 
         public class GaussianSplatData : IGaussianSplatData
         {
