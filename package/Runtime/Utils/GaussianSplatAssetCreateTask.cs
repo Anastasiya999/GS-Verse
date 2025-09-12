@@ -181,7 +181,6 @@ namespace GaussianSplatting.Runtime.Utils
             job.Schedule(shCount, 256).Complete();
             shMeans.Dispose();
             float t1 = Time.realtimeSinceStartup;
-            Debug.Log($"GS: clustered {splatData.Length / 1000000.0:F2}M SHs into {shCount / 1024}K ({passesOverData:F1}pass/{kBatchSize}batch) in {t1 - t0:F0}s");
         }
 
         [BurstCompile]
@@ -594,7 +593,7 @@ namespace GaussianSplatting.Runtime.Utils
         }
 
         [BurstCompile]
-        struct CreateSHDataJob : IJobParallelFor
+        public struct CreateSHDataJob : IJobParallelFor
         {
             [ReadOnly] public NativeArray<InputSplatData> m_Input;
             public GaussianSplatAsset.SHFormat m_Format;

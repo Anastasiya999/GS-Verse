@@ -1,0 +1,46 @@
+#pragma kernel CSMain
+
+StructuredBuffer<float3> _BasePositions;
+StructuredBuffer<float3> _Normals;
+RWStructuredBuffer<float3> _OutPositions;
+StructuredBuffer<float>  _FaceMask;   // NEW
+
+uint _VertexCount;
+float _InflateAmount;
+float _MinY;  // bottom anchor
+float _MaxY;  // top
+
+
+[numthreads(256, 1, 1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _VertexCount) return;
+
+    float3 p = _BasePositions[i];
+    float3 n = normalize(_Normals[i]);
+
+    // Compute vertical factor 0..1 (0 = bottom, 1 = top)
+    float t = saturate((p.y - _MinY) / (_MaxY - _MinY));
+
+    // Scale displacement by this factor (bottom fixed, top inflates)
+   // _OutPositions[i] = p + n * (_InflateAmount * t);
+
+    // Anchor mask: 0 if below anchor, 1 if above
+    float anchorMask = step(0.0f, p.z);
+
+     // face-based mask (0 = face below anchor, 1 = face above)
+    float faceMask = _FaceMask[i];
+
+    float inflate = _InflateAmount *  faceMask;
+
+
+    // Final inflation factor
+   // float inflate = _InflateAmount * t;
+   
+    // Final factor combines: vertical gradient * anchor cutoff * per-vertex weight
+   // float inflate = _InflateAmount * t * anchorMask ;
+
+
+    _OutPositions[i] = p + n * inflate;
+}
