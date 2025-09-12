@@ -2,40 +2,14 @@ using System.Collections.Generic;
 using UnityEngine;
 using Unity.Mathematics;
 using Unity.Collections;
+using Unity.Jobs;
+using Unity.Burst;
 
 namespace GaussianSplatting.Shared
 {
     public static class SplatMathUtils
     {
 
-
-        public static List<Vector3> CalculateXYZ(
-           List<Vector3> vertices,
-           int numPtsEachTriangle,
-           List<List<List<float>>> alphas)
-        {
-            List<Vector3> xyz = new List<Vector3>();
-            int numTriangles = vertices.Count / 3;
-            var normalizedAlphas = NormalizeAlphas(alphas);
-
-            for (int i = 0; i < numTriangles; i++)
-            {
-                Vector3 v0 = vertices[i * 3];
-                Vector3 v1 = vertices[i * 3 + 1];
-                Vector3 v2 = vertices[i * 3 + 2];
-
-                var triangleAlphas = normalizedAlphas[i];
-
-                for (int j = 0; j < numPtsEachTriangle; j++)
-                {
-                    var pointAlphas = triangleAlphas[j];
-                    Vector3 point = (pointAlphas[0] * v0) + (pointAlphas[1] * v1) + (pointAlphas[2] * v2);
-                    xyz.Add(point);
-                }
-            }
-
-            return xyz;
-        }
 
         public static (List<Quaternion> rotations, List<Vector3> scalings) GenerateRotationsAndScales(List<Vector3> vertices, List<float> scales, int numPtsEachTriangle)
         {
@@ -147,8 +121,7 @@ namespace GaussianSplatting.Shared
             return math.max(0, x);
         }
 
-
-        public static NativeArray<float3> GetMeshFaceVerticesNative(GameObject gameObject, Vector3[] Vertices, int[] triangles, Allocator allocator)
+        public static NativeArray<float3> GetMeshFaceVerticesNative(GameObject gameObject, NativeArray<float3> vertices, NativeArray<int> triangles, Allocator allocator)
         {
             MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
             if (meshFilter == null)
@@ -164,8 +137,7 @@ namespace GaussianSplatting.Shared
                 return default;
             }
 
-            Vector3[] vertices = TransformVertices(Vertices);
-            //int[] triangles = mesh.triangles;
+
             int totalFaces = triangles.Length / 3;
 
             NativeArray<float3> faceVertices = new NativeArray<float3>(totalFaces * 3, allocator);
@@ -174,42 +146,9 @@ namespace GaussianSplatting.Shared
             {
                 int baseIndex = i * 3;
 
-                faceVertices[baseIndex] = vertices[triangles[baseIndex]];
-                faceVertices[baseIndex + 1] = vertices[triangles[baseIndex + 1]];
-                faceVertices[baseIndex + 2] = vertices[triangles[baseIndex + 2]];
-            }
-
-            return faceVertices;
-        }
-
-        public static NativeArray<float3> GetMeshFaceVerticesNative(GameObject gameObject, NativeArray<float3> Vertices, NativeArray<int> triangles, Allocator allocator)
-        {
-            MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
-            if (meshFilter == null)
-            {
-                Debug.LogError("No MeshFilter component found on the GameObject.");
-                return default;
-            }
-
-            Mesh mesh = meshFilter.mesh;
-            if (mesh == null)
-            {
-                Debug.LogError("No mesh found in the MeshFilter component.");
-                return default;
-            }
-
-            var vertices = Vertices;
-            int totalFaces = triangles.Length / 3;
-
-            NativeArray<float3> faceVertices = new NativeArray<float3>(totalFaces * 3, allocator);
-
-            for (int i = 0; i < totalFaces; i++)
-            {
-                int baseIndex = i * 3;
-
-                faceVertices[baseIndex] = vertices[triangles[baseIndex]];
-                faceVertices[baseIndex + 1] = vertices[triangles[baseIndex + 1]];
-                faceVertices[baseIndex + 2] = vertices[triangles[baseIndex + 2]];
+                faceVertices[baseIndex] = TransformVertex(vertices[triangles[baseIndex]]);
+                faceVertices[baseIndex + 1] = TransformVertex(vertices[triangles[baseIndex + 1]]);
+                faceVertices[baseIndex + 2] = TransformVertex(vertices[triangles[baseIndex + 2]]);
             }
 
             return faceVertices;
@@ -229,52 +168,69 @@ namespace GaussianSplatting.Shared
                 int i2 = triangles[baseIdx + 2];
 
                 faceVertices[i * 3 + 0] = TransformVertex(vertices[i0]);
-                faceVertices[i * 3 + 1] = TransformVertex(vertices[i2]);
-                faceVertices[i * 3 + 2] = TransformVertex(vertices[i1]);
+                faceVertices[i * 3 + 1] = TransformVertex(vertices[i1]);
+                faceVertices[i * 3 + 2] = TransformVertex(vertices[i2]);
             }
 
             return faceVertices;
         }
 
+
+
         public static Vector3 TransformVertex(Vector3 v)
         {
             return new Vector3(
-                    -v.x,
+                    v.x,
                     v.y,
                      v.z
                     );
 
         }
 
-
-        public static Vector3[] TransformVertices(Vector3[] vertices)
+        public static NativeArray<float3> CreateXYZData(NativeArray<float3> alphas, NativeArray<float3> vertices, int numTriangles, int numPtsEachTriangle)
         {
-            Vector3[] transformedVertices = new Vector3[vertices.Length];
 
-            for (int i = 0; i < vertices.Length; i++)
+            NativeArray<float3> data = new(numTriangles * numPtsEachTriangle, Allocator.Persistent);
+
+            CreateXYZDataJob job = new CreateXYZDataJob
             {
-                transformedVertices[i] = new Vector3(
-                    vertices[i].x,
-                    -vertices[i].z,
-                    vertices[i].y
-                );
-            }
+                m_Alphas = alphas,
+                m_Vertices = vertices,
+                m_Output = data,
+                m_numberPtsPerTriangle = numPtsEachTriangle
+            };
+            job.Schedule(numTriangles * numPtsEachTriangle, 8192).Complete();
 
-            return transformedVertices;
+            return data;
         }
 
-        public static NativeArray<float3> TransformVertices(NativeArray<float3> vertices)
+        [BurstCompile]
+        struct CreateXYZDataJob : IJobParallelFor
         {
-            NativeArray<float3> transformedVertices = new NativeArray<float3>(vertices.Length, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
+            [ReadOnly] public NativeArray<float3> m_Alphas;
+            [ReadOnly] public NativeArray<float3> m_Vertices;
+            public int m_numberPtsPerTriangle;
+            [NativeDisableParallelForRestriction] public NativeArray<float3> m_Output;
 
-            for (int i = 0; i < vertices.Length; i++)
+
+            public unsafe void Execute(int index)
             {
-                float3 v = vertices[i];
-                transformedVertices[i] = new float3(v.x, -v.z, v.y);
-            }
+                int triangleIndex = index / m_numberPtsPerTriangle;
+                int pointIndex = index % m_numberPtsPerTriangle;
 
-            return transformedVertices;
+                int v0Idx = triangleIndex * 3;
+                float3 v0 = m_Vertices[v0Idx];
+                float3 v1 = m_Vertices[v0Idx + 1];
+                float3 v2 = m_Vertices[v0Idx + 2];
+
+                int alphaIndex = triangleIndex * m_numberPtsPerTriangle + pointIndex;
+                float3 alpha = m_Alphas[alphaIndex];
+                float3 point = alpha.x * v0 + alpha.y * v1 + alpha.z * v2;
+                m_Output[index] = point;
+            }
         }
+
+
 
     }
 

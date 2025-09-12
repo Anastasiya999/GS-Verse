@@ -6,6 +6,7 @@ using System.IO;
 using GaussianSplatting.Editor.Utils;
 using GaussianSplatting.Runtime;
 using GaussianSplatting.Runtime.Utils;
+using GaussianSplatting.Runtime.GaMeS;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -302,7 +303,7 @@ namespace GaussianSplatting.Editor
             else
             {
 
-                mesh = Resources.Load<GameObject>(m_MeshResourcePath).transform.GetChild(0).GetComponent<MeshFilter>().sharedMesh;
+                mesh = Instantiate(Resources.Load<GameObject>(m_MeshResourcePath).transform.GetChild(0).GetComponent<MeshFilter>().sharedMesh);
                 meshTransform = Resources.Load<GameObject>(m_MeshResourcePath).transform;
 
             }
@@ -312,7 +313,7 @@ namespace GaussianSplatting.Editor
             var normalizedAlpha = NormalizeAlphas(alphas);
             var numberOfSplatsPerFace = normalizedAlpha[0].Count;
 
-            using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(normalizedAlpha, scales, mesh, meshTransform, 9, numberOfSplatsPerFace);
+            using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(normalizedAlpha, scales, mesh, meshTransform, 9, numberOfSplatsPerFace, m_isBlenderMesh);
             //We need to linearize our splats before ReplaceSplatData because LoadInputSplatFile do that
             using NativeArray<InputSplatData> inputSplatsColored = LoadPLYSplatFile(m_InputPointCloudFile);
             using NativeArray<InputSplatData> inputSplatsWithColors = ReplaceSplatData(inputSplats, inputSplatsColored);
@@ -668,14 +669,88 @@ namespace GaussianSplatting.Editor
             return normals;
         }
 
-        public static List<Vector3> GetMeshFaceVertices(Mesh mesh, Transform meshTransform)
+
+        public static Mesh Convert(Mesh sourceMesh,
+                                       bool rotate90X = true,
+                                       bool mirrorX = true,
+                                       bool flipWinding = true,
+                                       bool makeUnique = true,
+                                       bool recalcNormals = false)
+        {
+            if (sourceMesh == null) return null;
+
+            // Make a unique instance to avoid editing shared asset unless caller asked otherwise.
+            Mesh mesh = sourceMesh;
+
+            // Apply rotation then mirror to vertices
+            Vector3[] verts = mesh.vertices;
+            Quaternion rot = rotate90X ? Quaternion.Euler(90f, 0f, 0f) : Quaternion.identity;
+            for (int i = 0; i < verts.Length; i++)
+            {
+                Vector3 v = verts[i];
+                v = rot * v;
+                if (mirrorX) v.x = -v.x;
+                verts[i] = v;
+            }
+            mesh.vertices = verts;
+
+            // Fix triangle winding per submesh
+            for (int s = 0; s < mesh.subMeshCount; s++)
+            {
+                int[] tris = mesh.GetTriangles(s);
+                if (flipWinding)
+                {
+                    for (int i = 0; i + 2 < tris.Length; i += 3)
+                    {
+                        int tmp = tris[i + 1];
+                        tris[i + 1] = tris[i + 2];
+                        tris[i + 2] = tmp;
+                    }
+                }
+                mesh.SetTriangles(tris, s);
+            }
+
+            // Normals: either recalc (safe) or transform existing normals
+            if (recalcNormals)
+            {
+                mesh.RecalculateNormals();
+            }
+            else
+            {
+                Vector3[] normals = mesh.normals;
+                if (normals != null && normals.Length == verts.Length)
+                {
+                    for (int i = 0; i < normals.Length; i++)
+                    {
+                        Vector3 n = normals[i];
+                        n = rot * n;            // rotate normal
+                        if (mirrorX) n.x = -n.x; // mirror normal (inverse-transpose for mirror is same flip)
+                        normals[i] = n;
+                    }
+                    mesh.normals = normals;
+                }
+                else
+                {
+                    mesh.RecalculateNormals();
+                }
+            }
+
+            mesh.RecalculateBounds();
+            // mesh.RecalculateTangents(); // optional if you need tangents
+
+            return mesh;
+        }
+
+        public static List<Vector3> GetMeshFaceVertices(Mesh mesh, Transform meshTransform, bool blenderMesh)
         {
             Vector3[] vertices = TransformVertices(mesh.vertices);
+            //vertices = RotateVertices(vertices, 90f);
 
             List<Vector3> faceVerticesList = new List<Vector3>();
             var triangles = mesh.triangles;
 
             int totalFaces = triangles.Length / 3;
+
 
             for (int i = 0; i < totalFaces; i++)
             {
@@ -684,12 +759,36 @@ namespace GaussianSplatting.Editor
                 Vector3 v1 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 1]]);
                 Vector3 v2 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 2]]);
 
+                // if (!blenderMesh)
+                // {
                 faceVerticesList.Add(v0);
-                faceVerticesList.Add(v2);
                 faceVerticesList.Add(v1);
+                faceVerticesList.Add(v2);
+                //}
+                // else
+                // {
+                //     faceVerticesList.Add(v0);
+                //     faceVerticesList.Add(v1);
+                //     faceVerticesList.Add(v2);
+                // }
+
+
             }
 
             return faceVerticesList;
+        }
+
+        public static Vector3[] RotateVertices(Vector3[] vertices, float angleDegrees)
+        {
+            Quaternion rotation = Quaternion.Euler(angleDegrees, 0f, 0f); // Rotate around X
+            Vector3[] rotatedVertices = new Vector3[vertices.Length];
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                rotatedVertices[i] = rotation * vertices[i];
+            }
+
+            return rotatedVertices;
         }
 
         public static Vector3[] TransformVertices(Vector3[] vertices)
@@ -699,7 +798,8 @@ namespace GaussianSplatting.Editor
             for (int i = 0; i < vertices.Length; i++)
             {
                 transformedVertices[i] = new Vector3(
-                    -vertices[i].x,
+
+                  vertices[i].x,
                     vertices[i].y,
                     vertices[i].z
 
@@ -951,9 +1051,10 @@ namespace GaussianSplatting.Editor
 
 
         unsafe NativeArray<InputSplatData>
-        CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, Mesh mesh, Transform meshTransform, int maxShDegree, int numOfSplatsPerFace)
+        CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, Mesh mesh, Transform meshTransform, int maxShDegree, int numOfSplatsPerFace, bool blenderMesh)
         {
-            var faceVertices = GetMeshFaceVertices(mesh, meshTransform);
+
+            var faceVertices = GetMeshFaceVertices(GaMeSUtils.TransformMesh(mesh), meshTransform, blenderMesh);
 
             List<Vector3> positions = CalculateXYZ(faceVertices, numOfSplatsPerFace, alphas);
             List<Vector3> normals = GenerateNormals(positions.Count);
@@ -2125,6 +2226,7 @@ namespace GaussianSplatting.Editor
 
 
             };
+
             // Get the first triangle's vertices
             Vector3 v1 = mesh.vertices[mesh.triangles[0]];
             Vector3 v2 = mesh.vertices[mesh.triangles[1]];
@@ -2140,7 +2242,6 @@ namespace GaussianSplatting.Editor
             mesh.RecalculateNormals(); // Update normals
 
             meshFilter.sharedMesh = mesh; // Assign new mesh
-
             MeshRenderer meshRenderer = targetObject.GetComponent<MeshRenderer>();
             if (meshRenderer == null)
             {
@@ -2148,7 +2249,7 @@ namespace GaussianSplatting.Editor
             }
 
             //
-            meshRenderer.material = new Material(Shader.Find("Standard"));
+            //  meshRenderer.material = new Material(Shader.Find("Standard"));
 
             return targetObject;
         }
