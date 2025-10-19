@@ -32,20 +32,18 @@ namespace GaussianSplatting.Editor
         // --- Member Variables (State) ---
         private InputMode m_SelectedMode = InputMode.GaMeS;
 
-
         // File pickers and input paths
         readonly FilePickerControl m_FilePicker = new();
         [SerializeField] string m_InputFile;
         [SerializeField] string m_InputPointCloudFile;
         [SerializeField] string m_MeshResourcePath;
         [SerializeField] string m_InputJsonFile;
-        [SerializeField] GameObject m_SelectedSceneObject;
 
         // Output settings
         [SerializeField] string m_OutputFolder = "Assets/GaussianAssets";
         [SerializeField] DataQuality m_Quality = DataQuality.Medium;
         private bool m_ImportCameras = true;
-        private bool m_isBlenderMesh = false;
+        private bool m_useMeshLeftHandedCS = false;
 
         // Format settings
         [SerializeField] GaussianSplatAsset.VectorFormat m_FormatPos;
@@ -58,21 +56,12 @@ namespace GaussianSplatting.Editor
         const string kCamerasJson = "cameras.json";
         const string kPrefQuality = "nesnausk.GaussianSplatting.CreatorQuality";
         const string kPrefOutputFolder = "nesnausk.GaussianSplatting.CreatorOutputFolder";
-        private static readonly float C0 = 0.28209479177387814f;
-
-        private static readonly int precision = 4;
-
-        private static readonly string filePath = "Assets/mesh_vertices.txt";
-
 
         // Cached file info
         private string m_PrevPlyPath;
         private int m_PrevVertexCount;
         private long m_PrevFileSize;
         private string m_ErrorMessage;
-
-
-        private List<Vector3> m_Vertices;
 
         enum DataQuality
         {
@@ -126,7 +115,6 @@ namespace GaussianSplatting.Editor
             {
                 DrawGaMeSInputGUI();
             }
-
 
             DrawCommonOutputGUI();
             DrawCreateButtonAndError();
@@ -189,83 +177,10 @@ namespace GaussianSplatting.Editor
             }
             return result;
         }
-
-        public static NativeArray<InputSplatData> ReplaceSplatData(NativeArray<InputSplatData> inputSplats, NativeArray<InputSplatData> inputSplatsWithColors, Allocator allocator = Allocator.Persistent)
-        {
-            int length = inputSplats.Length;
-            NativeArray<InputSplatData> newSplats = new NativeArray<InputSplatData>(length, allocator);
-
-
-            for (int i = 0; i < length; i++)
-            {
-                newSplats[i] = new InputSplatData
-                {
-                    pos = inputSplats[i].pos,
-                    nor = inputSplatsWithColors[i].nor,
-                    scale = inputSplats[i].scale,
-                    rot = inputSplats[i].rot,
-
-                    dc0 = inputSplatsWithColors[i].dc0,
-                    sh1 = inputSplatsWithColors[i].sh1,
-                    sh2 = inputSplatsWithColors[i].sh2,
-                    sh3 = inputSplatsWithColors[i].sh3,
-                    sh4 = inputSplatsWithColors[i].sh4,
-                    sh5 = inputSplatsWithColors[i].sh5,
-                    sh6 = inputSplatsWithColors[i].sh6,
-                    sh7 = inputSplatsWithColors[i].sh7,
-                    sh8 = inputSplatsWithColors[i].sh8,
-                    sh9 = inputSplatsWithColors[i].sh9,
-                    shA = inputSplatsWithColors[i].shA,
-                    shB = inputSplatsWithColors[i].shB,
-                    shC = inputSplatsWithColors[i].shC,
-                    shD = inputSplatsWithColors[i].shD,
-                    shE = inputSplatsWithColors[i].shE,
-                    shF = inputSplatsWithColors[i].shF,
-                    opacity = inputSplatsWithColors[i].opacity
-                };
-            }
-
-            return newSplats;
-        }
-
-
-        unsafe (List<List<List<float>>> alphas, List<List<float>> scales) LoadModelParams(string modelParamsPath)
-        {
-            string json = File.ReadAllText(modelParamsPath);
-
-            // Parse the JSON into the ModelParams object
-            var modelParams = JSONParser.FromJson<ModelParams>(json);
-
-            if (modelParams == null)
-            {
-                Debug.LogError("Failed to parse model_params.json");
-                return (null, null);
-            }
-
-            // Debug: Print the first values of _alpha and _scale
-            if (modelParams._alpha != null && modelParams._alpha.Count > 0)
-            {
-                Debug.Log($"First _alpha value: {modelParams._alpha.Count} {modelParams._alpha[0].Count}, type of alphas: {modelParams._alpha[0][0].Count}");
-            }
-
-            if (modelParams._scale != null && modelParams._scale.Count > 0)
-            {
-                Debug.Log($"First _scale value: {modelParams._scale[0][0]}, {modelParams._alpha.Count}, {modelParams._scale.Count}");
-            }
-
-            return (modelParams._alpha, modelParams._scale);
-        }
-
-
         unsafe void CreateGaMeSAsset()
         {
             m_ErrorMessage = null;
             // --- 1. Input validation ---
-            if (m_isBlenderMesh && string.IsNullOrWhiteSpace(m_InputFile))
-            {
-                m_ErrorMessage = $"Select input mesh PLY file";
-                return;
-            }
 
             if (string.IsNullOrWhiteSpace(m_InputPointCloudFile))
             {
@@ -279,7 +194,7 @@ namespace GaussianSplatting.Editor
                 return;
             }
 
-            if (!m_isBlenderMesh && string.IsNullOrWhiteSpace(m_MeshResourcePath))
+            if (string.IsNullOrWhiteSpace(m_MeshResourcePath))
             {
                 m_ErrorMessage = $"Provide path obj file";
                 return;
@@ -294,30 +209,29 @@ namespace GaussianSplatting.Editor
             // --- 3. Load mesh object ---
             Mesh mesh;
             Transform meshTransform;
-            if (m_isBlenderMesh)
-            {
-                var gameObject = CreateGameObjectFromPly(m_InputFile, m_SelectedSceneObject);
-                mesh = gameObject.GetComponent<MeshFilter>().sharedMesh;
-                meshTransform = gameObject.GetComponent<MeshFilter>().transform;
-            }
-            else
-            {
-
-                mesh = Instantiate(Resources.Load<GameObject>(m_MeshResourcePath).transform.GetChild(0).GetComponent<MeshFilter>().sharedMesh);
-                meshTransform = Resources.Load<GameObject>(m_MeshResourcePath).transform;
-
-            }
+            mesh = Instantiate(Resources.Load<GameObject>(m_MeshResourcePath).transform.GetChild(0).GetComponent<MeshFilter>().sharedMesh);
+            meshTransform = Resources.Load<GameObject>(m_MeshResourcePath).transform;
 
             // --- 4. Load model params ---
-            var (alphas, scales) = LoadModelParams(m_InputJsonFile);
-            var normalizedAlpha = NormalizeAlphas(alphas);
+            int maxShDegree = 9;
+            var (alphas, scales) = GaMeSUtilsEditor.LoadModelParams(m_InputJsonFile);
+            var normalizedAlpha = GaMeSUtilsEditor.NormalizeAlphas(alphas);
             var numberOfSplatsPerFace = normalizedAlpha[0].Count;
 
-            using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(normalizedAlpha, scales, mesh, meshTransform, 9, numberOfSplatsPerFace, m_isBlenderMesh);
+            var gaMeSsplatParams = new GaMeSSplatDataParams(
+    normalizedAlpha,
+    scales,
+    mesh,
+    meshTransform,
+    maxShDegree,
+    numberOfSplatsPerFace,
+    m_useMeshLeftHandedCS
+);
+
+            using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(gaMeSsplatParams);
             //We need to linearize our splats before ReplaceSplatData because LoadInputSplatFile do that
             using NativeArray<InputSplatData> inputSplatsColored = LoadPLYSplatFile(m_InputPointCloudFile);
-            using NativeArray<InputSplatData> inputSplatsWithColors = ReplaceSplatData(inputSplats, inputSplatsColored);
-
+            using NativeArray<InputSplatData> inputSplatsWithColors = GaMeSUtilsEditor.ReplaceSplatData(inputSplats, inputSplatsColored);
 
             if (inputSplatsWithColors.Length == 0)
             {
@@ -353,13 +267,12 @@ namespace GaussianSplatting.Editor
 
             EditorUtility.DisplayProgressBar(kProgressTitle, "Creating data objects", 0.7f);
             GaussianGaMeSSplatAsset asset = CreateInstance<GaussianGaMeSSplatAsset>();
-            asset.Initialize(inputSplatsWithColors.Length, m_FormatPos, m_FormatScale, m_FormatColor, m_FormatSH, boundsMin, boundsMax, cameras, m_InputPointCloudFile);
+            asset.Initialize(inputSplatsWithColors.Length, m_FormatPos, m_FormatScale, m_FormatColor, m_FormatSH, boundsMin, boundsMax, cameras, m_InputPointCloudFile, m_useMeshLeftHandedCS);
             asset.SetObjPath(m_MeshResourcePath);
             asset.SetNumberOfSplatsPerFace(numberOfSplatsPerFace);
             asset.name = baseName;
 
             var dataHash = new Hash128((uint)asset.splatCount, (uint)asset.formatVersion, 0, 0);
-
 
             string pathChunk = $"{m_OutputFolder}/{baseName}_chk.bytes";
             string pathAlpha = $"{m_OutputFolder}/{baseName}_alpha.bytes";
@@ -370,13 +283,10 @@ namespace GaussianSplatting.Editor
             string pathSh = $"{m_OutputFolder}/{baseName}_shs.bytes";
             LinearizeData(inputSplatsWithColors);
 
-
             // if we are using full lossless (FP32) data, then do not use any chunking, and keep data as-is
             bool useChunks = isUsingChunks;
             if (useChunks)
                 CreateChunkData(inputSplatsWithColors, pathChunk, ref dataHash);
-            Debug.Log($"First Splat Position from Create asset after reorder: {inputSplatsWithColors[0].scale} {numberOfSplatsPerFace}");
-
             CreatePositionsData(inputSplatsWithColors, pathPos, ref dataHash);
             CreateScaleData(scales, pathScale, ref dataHash);
             CreateAlphasData(normalizedAlpha, pathAlpha, ref dataHash, numberOfSplatsPerFace);
@@ -437,14 +347,12 @@ namespace GaussianSplatting.Editor
                 m_ErrorMessage = $"PLY vertex size mismatch, expected {UnsafeUtility.SizeOf<InputSplatData>()} but file has {vertexStride}";
                 return data;
             }
-
             // reorder SHs
             NativeArray<float> floatData = verticesRawData.Reinterpret<float>(1);
             ReorderSHs(splatCount, (float*)floatData.GetUnsafePtr());
 
             return verticesRawData.Reinterpret<InputSplatData>(1);
         }
-
 
         unsafe void CreateAsset()
         {
@@ -657,412 +565,19 @@ namespace GaussianSplatting.Editor
             return data;
         }
 
-        List<Vector3> GenerateNormals(int numPts)
-        {
-            List<Vector3> normals = new List<Vector3>(numPts);
-            for (int i = 0; i < numPts; i++)
-            {
-                normals.Add(Vector3.zero);
-            }
-
-            Debug.Log($"Finished generating normals. Total normals created: {normals.Count}");
-            return normals;
-        }
-
-
-        public static Mesh Convert(Mesh sourceMesh,
-                                       bool rotate90X = true,
-                                       bool mirrorX = true,
-                                       bool flipWinding = true,
-                                       bool makeUnique = true,
-                                       bool recalcNormals = false)
-        {
-            if (sourceMesh == null) return null;
-
-            // Make a unique instance to avoid editing shared asset unless caller asked otherwise.
-            Mesh mesh = sourceMesh;
-
-            // Apply rotation then mirror to vertices
-            Vector3[] verts = mesh.vertices;
-            Quaternion rot = rotate90X ? Quaternion.Euler(90f, 0f, 0f) : Quaternion.identity;
-            for (int i = 0; i < verts.Length; i++)
-            {
-                Vector3 v = verts[i];
-                v = rot * v;
-                if (mirrorX) v.x = -v.x;
-                verts[i] = v;
-            }
-            mesh.vertices = verts;
-
-            // Fix triangle winding per submesh
-            for (int s = 0; s < mesh.subMeshCount; s++)
-            {
-                int[] tris = mesh.GetTriangles(s);
-                if (flipWinding)
-                {
-                    for (int i = 0; i + 2 < tris.Length; i += 3)
-                    {
-                        int tmp = tris[i + 1];
-                        tris[i + 1] = tris[i + 2];
-                        tris[i + 2] = tmp;
-                    }
-                }
-                mesh.SetTriangles(tris, s);
-            }
-
-            // Normals: either recalc (safe) or transform existing normals
-            if (recalcNormals)
-            {
-                mesh.RecalculateNormals();
-            }
-            else
-            {
-                Vector3[] normals = mesh.normals;
-                if (normals != null && normals.Length == verts.Length)
-                {
-                    for (int i = 0; i < normals.Length; i++)
-                    {
-                        Vector3 n = normals[i];
-                        n = rot * n;            // rotate normal
-                        if (mirrorX) n.x = -n.x; // mirror normal (inverse-transpose for mirror is same flip)
-                        normals[i] = n;
-                    }
-                    mesh.normals = normals;
-                }
-                else
-                {
-                    mesh.RecalculateNormals();
-                }
-            }
-
-            mesh.RecalculateBounds();
-            // mesh.RecalculateTangents(); // optional if you need tangents
-
-            return mesh;
-        }
-
-        public static List<Vector3> GetMeshFaceVertices(Mesh mesh, Transform meshTransform, bool blenderMesh)
-        {
-            Vector3[] vertices = TransformVertices(mesh.vertices);
-            //vertices = RotateVertices(vertices, 90f);
-
-            List<Vector3> faceVerticesList = new List<Vector3>();
-            var triangles = mesh.triangles;
-
-            int totalFaces = triangles.Length / 3;
-
-
-            for (int i = 0; i < totalFaces; i++)
-            {
-                int baseIndex = i * 3;
-                Vector3 v0 = meshTransform.TransformPoint(vertices[triangles[baseIndex]]);
-                Vector3 v1 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 1]]);
-                Vector3 v2 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 2]]);
-
-                // if (!blenderMesh)
-                // {
-                faceVerticesList.Add(v0);
-                faceVerticesList.Add(v1);
-                faceVerticesList.Add(v2);
-                //}
-                // else
-                // {
-                //     faceVerticesList.Add(v0);
-                //     faceVerticesList.Add(v1);
-                //     faceVerticesList.Add(v2);
-                // }
-
-
-            }
-
-            return faceVerticesList;
-        }
-
-        public static Vector3[] RotateVertices(Vector3[] vertices, float angleDegrees)
-        {
-            Quaternion rotation = Quaternion.Euler(angleDegrees, 0f, 0f); // Rotate around X
-            Vector3[] rotatedVertices = new Vector3[vertices.Length];
-
-            for (int i = 0; i < vertices.Length; i++)
-            {
-                rotatedVertices[i] = rotation * vertices[i];
-            }
-
-            return rotatedVertices;
-        }
-
-        public static Vector3[] TransformVertices(Vector3[] vertices)
-        {
-            Vector3[] transformedVertices = new Vector3[vertices.Length];
-
-            for (int i = 0; i < vertices.Length; i++)
-            {
-                transformedVertices[i] = new Vector3(
-
-                  vertices[i].x,
-                    vertices[i].y,
-                    vertices[i].z
-
-                );
-            }
-
-            return transformedVertices;
-        }
-        List<Vector3> CalculateXYZ(
-      List<Vector3> vertices, int numPtsEachTriangle, List<List<List<float>>> alphas)
-        {
-            List<Vector3> xyz = new List<Vector3>();
-            int numTriangles = vertices.Count / 3;
-            var normalizedAlphas = alphas;
-
-
-            for (int i = 0; i < numTriangles; i++)
-            {
-
-                Vector3 v0 = vertices[i * 3];
-                Vector3 v1 = vertices[i * 3 + 1];
-                Vector3 v2 = vertices[i * 3 + 2];
-
-                var triangleAphas = normalizedAlphas[i];
-
-                for (int j = 0; j < numPtsEachTriangle; j++)
-                {
-                    var pointAlphas = triangleAphas[j];
-
-                    Vector3 point = (pointAlphas[0] * v0) + (pointAlphas[1] * v1) + (pointAlphas[2] * v2);
-                    xyz.Add(point);
-
-                }
-
-            }
-
-            return xyz;
-        }
-
-        private static List<List<List<float>>> NormalizeAlphas(List<List<List<float>>> alphas)
-        {
-            List<List<List<float>>> normalizedAlphas = new List<List<List<float>>>();
-
-            foreach (var outerList in alphas)
-            {
-                List<List<float>> normalizedOuterList = new List<List<float>>();
-
-                foreach (var innerList in outerList)
-                {
-                    List<float> reluApplied = new List<float>();
-                    foreach (float x in innerList)
-                    {
-                        reluApplied.Add(ReLU(x) + 1e-8f);
-                    }
-
-                    float sum = 0f;
-                    foreach (float x in reluApplied)
-                    {
-                        sum += x;
-                    }
-
-                    List<float> normalizedInnerList = new List<float>();
-                    foreach (float x in reluApplied)
-                    {
-                        normalizedInnerList.Add(x / sum);
-                    }
-
-                    normalizedOuterList.Add(normalizedInnerList);
-                }
-
-                normalizedAlphas.Add(normalizedOuterList);
-            }
-
-            return normalizedAlphas;
-        }
-
-        public static float ReLU(float x)
-        {
-            return math.max(0, x);
-        }
-
-
-        unsafe (List<Quaternion> rotations, List<Vector3> scalings) GenerateRotationsAndScales(List<Vector3> vertices, List<List<float>> scales, int numPtsEachTriangle)
-        {
-            int numTriangles = vertices.Count / 3;
-            float eps_s0 = 1e-8f;
-            List<Quaternion> rotations = new List<Quaternion>(numTriangles * numPtsEachTriangle);
-            List<Vector3> scalings = new List<Vector3>(numTriangles * numPtsEachTriangle);
-
-            for (int i = 0; i < numTriangles; i++)
-            {
-                // Extract the three vertices of the current triangle
-                Vector3 v0 = vertices[i * 3];
-                Vector3 v1 = vertices[i * 3 + 1];
-                Vector3 v2 = vertices[i * 3 + 2];
-
-                Vector3 normal = Vector3.Cross(v1 - v0, v2 - v0).normalized;
-
-                Vector3 centroid = (v0 + v1 + v2) / 3.0f;
-
-                Vector3 basis1 = (v1 - centroid).normalized;
-
-                // Calculate the second basis vector (v2) using Gram-Schmidt
-                Vector3 v2Init = v2 - centroid;
-                Vector3 basis2 = (v2Init - Vector3.Dot(v2Init, normal) * normal - Vector3.Dot(v2Init, basis1) * basis1).normalized;
-
-                // Scaling factors
-                float s1 = (v1 - centroid).magnitude / 2.0f; // Scaling factor for v1
-                float s2 = Vector3.Dot(v2Init, basis2) / 2.0f; // Scaling factor for v2
-                float s0 = eps_s0;
-
-                Matrix4x4 rotationMatrix = new Matrix4x4();
-
-                rotationMatrix.SetColumn(0, new Vector4(normal.x, normal.y, normal.z, 0)); // x-axis
-                rotationMatrix.SetColumn(1, new Vector4(basis1.x, basis1.y, basis1.z, 0)); // y-axis
-                rotationMatrix.SetColumn(2, new Vector4(basis2.x, basis2.y, basis2.z, 0)); // z-axis
-                rotationMatrix.SetColumn(3, new Vector4(0, 0, 0, 1)); // z-axis
-
-                //Converting to Quaternion
-                Quaternion rotation = rotationMatrix.rotation;
-                rotation = new Quaternion(rotation.w, rotation.x, rotation.y, rotation.z);
-
-
-                for (int j = 0; j < numPtsEachTriangle; j++)
-                {
-                    List<float> scaleFactor = scales[i * numPtsEachTriangle + j];
-                    float x = math.log(ReLU(scaleFactor[0] * s0) + eps_s0);
-                    float y = math.log(ReLU(scaleFactor[0] * s1) + eps_s0);
-                    float z = math.log(ReLU(scaleFactor[0] * s2) + eps_s0);
-                    scalings.Add(new Vector3(x, y, z));
-                    //broadcast rotations
-                    rotations.Add(rotation);
-
-                }
-
-
-            }
-
-            return (rotations, scalings);
-        }
-
-
-        private static List<Vector3> RGB2SH(List<Vector3> rgbs)
-        {
-            List<Vector3> shs = new List<Vector3>(rgbs.Count);
-
-
-            for (int i = 0; i < rgbs.Count; i++)
-            {
-                Vector3 rgb = rgbs[i];
-                Vector3 sh = new Vector3(
-                    (rgb.x - 0.5f) / C0,  // R -> SH conversion
-                    (rgb.y - 0.5f) / C0,  // G -> SH conversion
-                    (rgb.z - 0.5f) / C0   // B -> SH conversion
-                );
-
-
-                shs.Add(sh);
-            }
-
-            return shs;
-        }
-
-
-
-        public static List<Vector3> SH2RGB(List<Vector3> shs)
-        {
-            List<Vector3> rgbs = new List<Vector3>(shs.Count);
-
-
-            for (int i = 0; i < shs.Count; i++)
-            {
-                Vector3 sh = shs[i];
-                Vector3 rgb = new Vector3(
-                    sh.x * C0 + 0.5f,  // R
-                    sh.y * C0 + 0.5f,  // G
-                    sh.z * C0 + 0.5f   // B
-                );
-
-                rgbs.Add(rgb);
-            }
-
-            return rgbs;
-        }
-
-        public static List<Vector3> GenerateRandomColors(int numPts)
-        {
-            List<Vector3> colors = new List<Vector3>(numPts);
-
-
-            for (int i = 0; i < numPts; i++)
-            {
-
-                float r = UnityEngine.Random.value;
-                float g = UnityEngine.Random.value;
-                float b = UnityEngine.Random.value;
-
-                // Scale down the values by dividing by 255
-                Vector3 color = new Vector3(r / 255.0f, g / 255.0f, b / 255.0f);
-
-
-                colors.Add(color);
-            }
-
-            return colors;
-        }
-
-        public static List<List<float[]>> CreateFeatures(List<Vector3> colors, int maxShDegree)
-        {
-            // Step 1: Convert RGB to SH
-            List<Vector3> fusedColor = RGB2SH(colors);
-
-            // Step 2: Initialize features array with zeros
-            int featureLength = (maxShDegree + 1) * (maxShDegree + 1);
-            List<List<float[]>> features = new List<List<float[]>>(fusedColor.Count);
-
-            for (int i = 0; i < colors.Count; i++)
-            {
-                List<float[]> channels = new List<float[]>();
-
-                float[] featureR = new float[featureLength];
-                float[] featureG = new float[featureLength];
-                float[] featureB = new float[featureLength];
-
-                // Step 4: Assign the SH values (RGB to SH conversion) to the first 3 features
-                featureR[0] = fusedColor[i].x;  // R
-                featureG[0] = fusedColor[i].y;  // G
-                featureB[0] = fusedColor[i].z;  // B
-
-                // Step 5: Set the rest of the feature vector to zero
-                for (int j = 1; j < featureLength; j++)
-                {
-                    featureR[j] = 0;
-                    featureG[j] = 0;
-                    featureB[j] = 0;
-                }
-
-                channels.Add(featureR);
-                channels.Add(featureG);
-                channels.Add(featureB);
-
-                // Add to the overall features list
-                features.Add(channels);
-
-            }
-
-            return features;
-        }
-
-
         unsafe NativeArray<InputSplatData>
-        CreateSplatDataFromMemory(List<List<List<float>>> alphas, List<List<float>> scales, Mesh mesh, Transform meshTransform, int maxShDegree, int numOfSplatsPerFace, bool blenderMesh)
+        CreateSplatDataFromMemory(GaMeSSplatDataParams p)
         {
 
-            var faceVertices = GetMeshFaceVertices(GaMeSUtils.TransformMesh(mesh), meshTransform, blenderMesh);
+            var isAdditionalMeshRotation = p.UseMeshLeftHandedCS;
 
-            List<Vector3> positions = CalculateXYZ(faceVertices, numOfSplatsPerFace, alphas);
-            List<Vector3> normals = GenerateNormals(positions.Count);
-            List<Vector3> colors = SH2RGB(GenerateRandomColors(positions.Count));
-            List<List<float[]>> features = CreateFeatures(colors, maxShDegree);
-            var (rotations, scalings) = GenerateRotationsAndScales(faceVertices, scales, numOfSplatsPerFace);
+            var faceVertices = GaMeSUtilsEditor.GetMeshFaceVertices(GaMeSUtils.TransformMesh(p.Mesh, isAdditionalMeshRotation), p.MeshTransform);
 
-
+            List<Vector3> positions = GaMeSUtilsEditor.CalculateXYZ(faceVertices, p.NumOfSplatsPerFace, p.Alphas);
+            List<Vector3> normals = GaMeSUtilsEditor.GenerateNormals(positions.Count);
+            List<Vector3> colors = GaMeSUtilsEditor.SH2RGB(GaMeSUtilsEditor.GenerateRandomColors(positions.Count));
+            List<List<float[]>> features = GaMeSUtilsEditor.CreateFeatures(colors, p.MaxShDegree);
+            var (rotations, scalings) = GaMeSUtilsEditor.GenerateRotationsAndScales(faceVertices, p.Scales, p.NumOfSplatsPerFace);
 
             NativeArray<InputSplatData> data = new NativeArray<InputSplatData>(positions.Count, Allocator.Persistent);
 
@@ -1092,8 +607,6 @@ namespace GaussianSplatting.Editor
                     shD = new Vector3(features[i][0][13], features[i][1][13], features[i][2][13]),
                     shE = new Vector3(features[i][0][14], features[i][1][14], features[i][2][14]),
                     shF = new Vector3(features[i][0][15], features[i][1][15], features[i][2][15]),
-
-
                 };
             }
 
@@ -1283,7 +796,6 @@ namespace GaussianSplatting.Editor
             job.Schedule(shCount, 256).Complete();
             shMeans.Dispose();
             float t1 = Time.realtimeSinceStartup;
-            Debug.Log($"GS: clustered {splatData.Length / 1000000.0:F2}M SHs into {shCount / 1024}K ({passesOverData:F1}pass/{kBatchSize}batch) in {t1 - t0:F0}s");
         }
 
         [BurstCompile]
@@ -1966,16 +1478,7 @@ namespace GaussianSplatting.Editor
         {
             GUILayout.Label("Input Data", EditorStyles.boldLabel);
 
-            m_isBlenderMesh = EditorGUILayout.Toggle("Blender mesh", m_isBlenderMesh);
-
-
-            if (m_isBlenderMesh)
-            {
-                // Mesh PLY file
-                var rectMesh = EditorGUILayout.GetControlRect(true);
-                m_InputFile = m_FilePicker.PathFieldGUI(rectMesh, new GUIContent("Input Mesh PLY File"), m_InputFile, "ply", "PointCloudFile");
-
-            }
+            m_useMeshLeftHandedCS = EditorGUILayout.Toggle("L-Handed Coordinate System", m_useMeshLeftHandedCS);
 
             // Point Cloud PLY file
             var rectCloud = EditorGUILayout.GetControlRect(true);
@@ -1992,15 +1495,7 @@ namespace GaussianSplatting.Editor
                 }
             }
 
-            if (!m_isBlenderMesh)
-            {
-                m_MeshResourcePath = EditorGUILayout.TextField("Path to obj", m_MeshResourcePath);
-            }
-            else
-            {
-                m_SelectedSceneObject = (GameObject)EditorGUILayout.ObjectField("Scene Object", m_SelectedSceneObject, typeof(GameObject), true);
-
-            }
+            m_MeshResourcePath = EditorGUILayout.TextField("Path to obj", m_MeshResourcePath);
 
             // Scene object
 
@@ -2148,114 +1643,34 @@ namespace GaussianSplatting.Editor
             public List<List<float>> _scale { get; set; }
         }
 
-        private void LoadVerticesFromSceneObject()
+        public struct GaMeSSplatDataParams
         {
-            if (m_SelectedSceneObject == null)
+            public List<List<List<float>>> Alphas;
+            public List<List<float>> Scales;
+            public Mesh Mesh;
+            public Transform MeshTransform;
+            public int MaxShDegree;
+            public int NumOfSplatsPerFace;
+            public bool UseMeshLeftHandedCS;
+
+            public GaMeSSplatDataParams(
+                List<List<List<float>>> alphas,
+                List<List<float>> scales,
+                Mesh mesh,
+                Transform meshTransform,
+                int maxShDegree,
+                int numOfSplatsPerFace,
+                bool useMeshLeftHandedCS)
             {
-                Debug.LogError("No GameObject selected.");
-                return;
-            }
-
-            MeshFilter meshFilter = m_SelectedSceneObject.GetComponent<MeshFilter>();
-
-            Color[] vertexColors = meshFilter.mesh.colors;
-
-            Debug.Log("No colors found in the MeshFilter component.");
-
-            // Print the vertex colors (for debugging)
-            for (int i = 0; i < vertexColors.Length; i++)
-            {
-                Debug.Log("Vertex " + i + " Color: " + vertexColors[i]);
-            }
-
-            if (meshFilter != null)
-            {
-                m_Vertices = new List<Vector3>(meshFilter.sharedMesh.vertices);
-                Debug.Log($"Loaded {m_Vertices.Count} vertices, {meshFilter.sharedMesh.triangles.Length} triangles from scene object.");
-            }
-            else
-            {
-                Debug.LogError("Selected GameObject does not have a MeshFilter component.");
+                Alphas = alphas;
+                Scales = scales;
+                Mesh = mesh;
+                MeshTransform = meshTransform;
+                MaxShDegree = maxShDegree;
+                NumOfSplatsPerFace = numOfSplatsPerFace;
+                UseMeshLeftHandedCS = useMeshLeftHandedCS;
             }
         }
-
-        private static GameObject CreateGameObjectFromPly(string filePath, GameObject targetObject)
-        {
-            if (targetObject == null)
-            {
-                Debug.LogError("Target GameObject is null. Ensure it exists before calling this function.");
-                return null;
-            }
-
-
-            if (!File.Exists(filePath))
-            {
-                Debug.LogError("PLY file not found at: " + filePath);
-                return null;
-            }
-
-            PlyResult ply = PlyHandler.GetVerticesAndTriangles(filePath);
-
-            if (ply.Vertices == null || ply.Vertices.Count == 0 || ply.Triangles == null || ply.Triangles.Count == 0)
-            {
-                Debug.LogError("PLY file contains no valid mesh data.");
-                return null;
-            }
-
-            MeshFilter meshFilter = targetObject.GetComponent<MeshFilter>();
-            if (meshFilter != null && meshFilter.sharedMesh != null)
-            {
-                if (meshFilter.sharedMesh != null)
-                {
-
-                    UnityEngine.Object.DestroyImmediate(meshFilter.sharedMesh);
-
-                }
-
-            }
-            else
-            {
-                meshFilter = targetObject.AddComponent<MeshFilter>(); // Add if missing
-            }
-
-            // Create new mesh
-            Mesh mesh = new Mesh
-            {
-                vertices = ply.Vertices.ToArray(),
-                triangles = ply.Triangles.ToArray()
-
-
-            };
-
-            // Get the first triangle's vertices
-            Vector3 v1 = mesh.vertices[mesh.triangles[0]];
-            Vector3 v2 = mesh.vertices[mesh.triangles[1]];
-            Vector3 v3 = mesh.vertices[mesh.triangles[2]];
-
-            Debug.Log($"First face vertices from asset creator:\n{v1}\n{v2}\n{v3}");
-
-            Vector3 v4 = mesh.vertices[mesh.triangles[3]];
-            Vector3 v5 = mesh.vertices[mesh.triangles[4]];
-            Vector3 v6 = mesh.vertices[mesh.triangles[5]];
-
-            Debug.Log($"Second face vertices from asset creator:\n{v4}\n{v5}\n{v6}");
-            mesh.RecalculateNormals(); // Update normals
-
-            meshFilter.sharedMesh = mesh; // Assign new mesh
-            MeshRenderer meshRenderer = targetObject.GetComponent<MeshRenderer>();
-            if (meshRenderer == null)
-            {
-                meshRenderer = targetObject.AddComponent<MeshRenderer>(); // Add if missing
-            }
-
-            //
-            //  meshRenderer.material = new Material(Shader.Find("Standard"));
-
-            return targetObject;
-        }
-
-
-
     }
 
 

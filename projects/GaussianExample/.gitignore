@@ -49,6 +49,22 @@ ExportedObj/
 *.mdb
 *.opendb
 *.VC.db
+*.ply*
+*.obj*
+*.json*
+/Resources/*
+
+# Gaussian Splatting Assets
+*_alpha.bytes*
+*_chk.bytes*
+*_col.bytes*
+*_oth.bytes*
+*_scale.bytes*
+*_pos.bytes*
+*_shs.bytes*
+*.asset*
+
+
 
 # Unity3D generated meta files
 *.pidb.meta

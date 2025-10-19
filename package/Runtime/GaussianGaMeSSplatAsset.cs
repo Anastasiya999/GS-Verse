@@ -12,6 +12,7 @@ namespace GaussianSplatting.Runtime
         [SerializeField] TextAsset m_AlphaData;
         [SerializeField] TextAsset m_ScaleData;
         [SerializeField] string m_PointCloudPath;
+        [SerializeField] bool m_useMeshLeftHandedCS;
 
         public string objPath => m_ObjPath;
         public int numberOfSplatsPerFace => m_NumberOfSplatsPerFace;
@@ -19,7 +20,9 @@ namespace GaussianSplatting.Runtime
         public TextAsset alphaData => m_AlphaData;
         public TextAsset scaleData => m_ScaleData;
 
-        public void Initialize(int splats, VectorFormat formatPos, VectorFormat formatScale, ColorFormat formatColor, SHFormat formatSh, Vector3 bMin, Vector3 bMax, CameraInfo[] cameraInfos, string pointCloudPath)
+        public bool useMeshLeftHandedCS => m_useMeshLeftHandedCS;
+
+        public void Initialize(int splats, VectorFormat formatPos, VectorFormat formatScale, ColorFormat formatColor, SHFormat formatSh, Vector3 bMin, Vector3 bMax, CameraInfo[] cameraInfos, string pointCloudPath, bool useMeshLeftHandedCS)
         {
             m_SplatCount = splats;
             m_FormatVersion = kCurrentVersion;
@@ -31,6 +34,7 @@ namespace GaussianSplatting.Runtime
             m_BoundsMin = bMin;
             m_BoundsMax = bMax;
             m_PointCloudPath = pointCloudPath;
+            m_useMeshLeftHandedCS = useMeshLeftHandedCS;
         }
 
 

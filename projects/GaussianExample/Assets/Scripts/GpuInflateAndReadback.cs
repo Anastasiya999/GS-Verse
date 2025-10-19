@@ -7,12 +7,13 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
+using UnityEngine.XR.Interaction.Toolkit;
 
-//[RequireComponent(typeof(MeshFilter))]
 public class GpuInflateAndReadback : MonoBehaviour
 {
     // Update is called once per frame[Header("XR Input Action (Trigger)")]
-    public InputActionReference triggerAction;
+    public InputActionReference triggerActionLeft;
+    public InputActionReference triggerActionRight;
     [Header("Shader")]
     public ComputeShader inflateCompute;
 
@@ -45,30 +46,7 @@ public class GpuInflateAndReadback : MonoBehaviour
     public List<Transform> anchorPoints;  // fill in inspector
     private GaussianSplatRuntimeAsset _lastInjectedAsset;
     private readonly List<Action> _deferredCleanup = new List<Action>();
-    public static void MirrorAlongY(Mesh mesh)
-    {
-        // Transform vertices
-        Vector3[] vertices = mesh.vertices;
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            vertices[i] = new Vector3(-vertices[i].x, vertices[i].y, vertices[i].z);
-        }
-        mesh.vertices = vertices;
-
-        // Flip triangle winding (to keep normals outward)
-        int[] triangles = mesh.triangles;
-        for (int i = 0; i < triangles.Length; i += 3)
-        {
-
-            var v1 = triangles[i + 1];
-            var v2 = triangles[i + 2];
-            triangles[i + 1] = v2;
-            triangles[i + 2] = v1;
-        }
-        mesh.triangles = triangles;
-        mesh.RecalculateNormals();
-        mesh.RecalculateBounds();
-    }
+    private bool isHovered = false;
 
     void UpdateFaceMask(Vector3 localAnchor)
     {
@@ -199,10 +177,21 @@ public class GpuInflateAndReadback : MonoBehaviour
         for (int i = 0; i < triangleCount; i++)
             triangles[i] = tris[i];
 
-
-
         // build mask once
         UpdateFaceMask(localAnchor);
+    }
+
+    public void OnHoverEnter(HoverEnterEventArgs args)
+    {
+        isHovered = true;
+
+    }
+
+    // Called when hover stops
+    public void OnHoverExit(HoverExitEventArgs args)
+    {
+        isHovered = false;
+
     }
 
     private void RegisterNativeCleanup(Action cleanupAction)
@@ -210,9 +199,11 @@ public class GpuInflateAndReadback : MonoBehaviour
         if (cleanupAction != null) _deferredCleanup.Add(cleanupAction);
     }
 
-    void Update()
+    void FixedUpdate()
     {
-        float triggerValue = triggerAction.action.ReadValue<float>();
+        float triggerValueLeft = triggerActionLeft.action.ReadValue<float>();
+        float triggerValueRight = triggerActionRight.action.ReadValue<float>();
+        float triggerValue = Mathf.Max(triggerValueLeft, triggerValueRight);
 
         if (triggerValue > 0.1f) // if trigger pressed
         {
@@ -223,7 +214,7 @@ public class GpuInflateAndReadback : MonoBehaviour
             isInflating = false;
         }
 
-        if (isInflating && inflateAmount != maxInflate)
+        if (isHovered && triggerValue > 0.1f && inflateAmount != maxInflate)
         {
             inflateAmount = Mathf.Min(maxInflate, inflateAmount + inflateSpeed * Time.deltaTime);
 
@@ -264,8 +255,6 @@ public class GpuInflateAndReadback : MonoBehaviour
         {
             if (inflateAmount == maxInflate && !gravityForce.enabled)
             {
-                Debug.Log(inflateAmount == maxInflate);
-
                 gravityForce.enabled = true;
                 MeshCollider addedCollider = gameObject.GetComponent<MeshCollider>();
                 if (addedCollider == null)

@@ -6,16 +6,344 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Burst;
 using System;
+using System.IO;
 
 namespace GaussianSplatting.Runtime.GaMeS
 {
+    public static class GaMeSUtilsEditor
+    {
+        private static readonly float C0 = 0.28209479177387814f;
+
+        public class ModelParams
+        {
+            public List<List<List<float>>> _alpha { get; set; }
+            public List<List<float>> _scale { get; set; }
+        }
+
+
+        public static List<Vector3> CalculateXYZ(
+     List<Vector3> vertices, int numPtsEachTriangle, List<List<List<float>>> alphas)
+        {
+            List<Vector3> xyz = new List<Vector3>();
+            int numTriangles = vertices.Count / 3;
+            var normalizedAlphas = alphas;
+
+            for (int i = 0; i < numTriangles; i++)
+            {
+
+                Vector3 v0 = vertices[i * 3];
+                Vector3 v1 = vertices[i * 3 + 1];
+                Vector3 v2 = vertices[i * 3 + 2];
+
+                var triangleAphas = normalizedAlphas[i];
+
+                for (int j = 0; j < numPtsEachTriangle; j++)
+                {
+                    var pointAlphas = triangleAphas[j];
+
+                    Vector3 point = (pointAlphas[0] * v0) + (pointAlphas[1] * v1) + (pointAlphas[2] * v2);
+                    xyz.Add(point);
+                }
+
+            }
+
+            return xyz;
+        }
+
+        public static List<Vector3> GenerateNormals(int numPts)
+        {
+            List<Vector3> normals = new List<Vector3>(numPts);
+            for (int i = 0; i < numPts; i++)
+            {
+                normals.Add(Vector3.zero);
+            }
+
+            return normals;
+        }
+
+
+        public static List<Vector3> SH2RGB(List<Vector3> shs)
+        {
+            List<Vector3> rgbs = new List<Vector3>(shs.Count);
+
+
+            for (int i = 0; i < shs.Count; i++)
+            {
+                Vector3 sh = shs[i];
+                Vector3 rgb = new Vector3(
+                    sh.x * C0 + 0.5f,  // R
+                    sh.y * C0 + 0.5f,  // G
+                    sh.z * C0 + 0.5f   // B
+                );
+
+                rgbs.Add(rgb);
+            }
+
+            return rgbs;
+        }
+
+        public static List<Vector3> GenerateRandomColors(int numPts)
+        {
+            List<Vector3> colors = new List<Vector3>(numPts);
+            for (int i = 0; i < numPts; i++)
+            {
+
+                float r = UnityEngine.Random.value;
+                float g = UnityEngine.Random.value;
+                float b = UnityEngine.Random.value;
+
+                // Scale down the values by dividing by 255
+                Vector3 color = new Vector3(r / 255.0f, g / 255.0f, b / 255.0f);
+                colors.Add(color);
+            }
+
+            return colors;
+        }
+
+        public static List<List<float[]>> CreateFeatures(List<Vector3> colors, int maxShDegree)
+        {
+            // Step 1: Convert RGB to SH
+            List<Vector3> fusedColor = RGB2SH(colors);
+
+            // Step 2: Initialize features array with zeros
+            int featureLength = (maxShDegree + 1) * (maxShDegree + 1);
+            List<List<float[]>> features = new List<List<float[]>>(fusedColor.Count);
+
+            for (int i = 0; i < colors.Count; i++)
+            {
+                List<float[]> channels = new List<float[]>();
+
+                float[] featureR = new float[featureLength];
+                float[] featureG = new float[featureLength];
+                float[] featureB = new float[featureLength];
+
+                // Step 4: Assign the SH values (RGB to SH conversion) to the first 3 features
+                featureR[0] = fusedColor[i].x;  // R
+                featureG[0] = fusedColor[i].y;  // G
+                featureB[0] = fusedColor[i].z;  // B
+
+                // Step 5: Set the rest of the feature vector to zero
+                for (int j = 1; j < featureLength; j++)
+                {
+                    featureR[j] = 0;
+                    featureG[j] = 0;
+                    featureB[j] = 0;
+                }
+
+                channels.Add(featureR);
+                channels.Add(featureG);
+                channels.Add(featureB);
+
+                // Add to the overall features list
+                features.Add(channels);
+
+            }
+
+            return features;
+        }
+
+        public static List<Vector3> GetMeshFaceVertices(Mesh mesh, Transform meshTransform)
+        {
+            Vector3[] vertices = mesh.vertices;
+            List<Vector3> faceVerticesList = new List<Vector3>();
+            var triangles = mesh.triangles;
+            int totalFaces = triangles.Length / 3;
+
+            for (int i = 0; i < totalFaces; i++)
+            {
+                int baseIndex = i * 3;
+                Vector3 v0 = meshTransform.TransformPoint(vertices[triangles[baseIndex]]);
+                Vector3 v1 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 1]]);
+                Vector3 v2 = meshTransform.TransformPoint(vertices[triangles[baseIndex + 2]]);
+
+                faceVerticesList.Add(v0);
+                faceVerticesList.Add(v1);
+                faceVerticesList.Add(v2);
+            }
+
+            return faceVerticesList;
+        }
+
+        public static unsafe (List<List<List<float>>> alphas, List<List<float>> scales) LoadModelParams(string modelParamsPath)
+        {
+            string json = File.ReadAllText(modelParamsPath);
+
+            // Parse the JSON into the ModelParams object
+            var modelParams = JSONParser.FromJson<ModelParams>(json);
+
+            if (modelParams == null)
+            {
+                //TODO: add assert
+                return (null, null);
+            }
+
+            return (modelParams._alpha, modelParams._scale);
+        }
+
+        public static NativeArray<InputSplatData> ReplaceSplatData(NativeArray<InputSplatData> inputSplats, NativeArray<InputSplatData> inputSplatsWithColors, Allocator allocator = Allocator.Persistent)
+        {
+            int length = inputSplats.Length;
+            NativeArray<InputSplatData> newSplats = new NativeArray<InputSplatData>(length, allocator);
+
+            for (int i = 0; i < length; i++)
+            {
+                newSplats[i] = new InputSplatData
+                {
+                    pos = inputSplats[i].pos,
+                    nor = inputSplatsWithColors[i].nor,
+                    scale = inputSplats[i].scale,
+                    rot = inputSplats[i].rot,
+
+                    dc0 = inputSplatsWithColors[i].dc0,
+                    sh1 = inputSplatsWithColors[i].sh1,
+                    sh2 = inputSplatsWithColors[i].sh2,
+                    sh3 = inputSplatsWithColors[i].sh3,
+                    sh4 = inputSplatsWithColors[i].sh4,
+                    sh5 = inputSplatsWithColors[i].sh5,
+                    sh6 = inputSplatsWithColors[i].sh6,
+                    sh7 = inputSplatsWithColors[i].sh7,
+                    sh8 = inputSplatsWithColors[i].sh8,
+                    sh9 = inputSplatsWithColors[i].sh9,
+                    shA = inputSplatsWithColors[i].shA,
+                    shB = inputSplatsWithColors[i].shB,
+                    shC = inputSplatsWithColors[i].shC,
+                    shD = inputSplatsWithColors[i].shD,
+                    shE = inputSplatsWithColors[i].shE,
+                    shF = inputSplatsWithColors[i].shF,
+                    opacity = inputSplatsWithColors[i].opacity
+                };
+            }
+
+            return newSplats;
+        }
+
+
+        public static List<List<List<float>>> NormalizeAlphas(List<List<List<float>>> alphas)
+        {
+            List<List<List<float>>> normalizedAlphas = new List<List<List<float>>>();
+
+            foreach (var outerList in alphas)
+            {
+                List<List<float>> normalizedOuterList = new List<List<float>>();
+
+                foreach (var innerList in outerList)
+                {
+                    List<float> reluApplied = new List<float>();
+                    foreach (float x in innerList)
+                    {
+                        reluApplied.Add(GaMeSUtils.ReLU(x) + 1e-8f);
+                    }
+
+                    float sum = 0f;
+                    foreach (float x in reluApplied)
+                    {
+                        sum += x;
+                    }
+
+                    List<float> normalizedInnerList = new List<float>();
+                    foreach (float x in reluApplied)
+                    {
+                        normalizedInnerList.Add(x / sum);
+                    }
+
+                    normalizedOuterList.Add(normalizedInnerList);
+                }
+
+                normalizedAlphas.Add(normalizedOuterList);
+            }
+
+            return normalizedAlphas;
+        }
+
+
+
+        public static unsafe (List<Quaternion> rotations, List<Vector3> scalings) GenerateRotationsAndScales(List<Vector3> vertices, List<List<float>> scales, int numPtsEachTriangle)
+        {
+            int numTriangles = vertices.Count / 3;
+            float eps_s0 = 1e-8f;
+            List<Quaternion> rotations = new List<Quaternion>(numTriangles * numPtsEachTriangle);
+            List<Vector3> scalings = new List<Vector3>(numTriangles * numPtsEachTriangle);
+
+            for (int i = 0; i < numTriangles; i++)
+            {
+                // Extract the three vertices of the current triangle
+                Vector3 v0 = vertices[i * 3];
+                Vector3 v1 = vertices[i * 3 + 1];
+                Vector3 v2 = vertices[i * 3 + 2];
+
+                Vector3 normal = Vector3.Cross(v1 - v0, v2 - v0).normalized;
+
+                Vector3 centroid = (v0 + v1 + v2) / 3.0f;
+
+                Vector3 basis1 = (v1 - centroid).normalized;
+
+                // Calculate the second basis vector (v2) using Gram-Schmidt
+                Vector3 v2Init = v2 - centroid;
+                Vector3 basis2 = (v2Init - Vector3.Dot(v2Init, normal) * normal - Vector3.Dot(v2Init, basis1) * basis1).normalized;
+
+                // Scaling factors
+                float s1 = (v1 - centroid).magnitude / 2.0f; // Scaling factor for v1
+                float s2 = Vector3.Dot(v2Init, basis2) / 2.0f; // Scaling factor for v2
+                float s0 = eps_s0;
+
+                Matrix4x4 rotationMatrix = new Matrix4x4();
+
+                rotationMatrix.SetColumn(0, new Vector4(normal.x, normal.y, normal.z, 0)); // x-axis
+                rotationMatrix.SetColumn(1, new Vector4(basis1.x, basis1.y, basis1.z, 0)); // y-axis
+                rotationMatrix.SetColumn(2, new Vector4(basis2.x, basis2.y, basis2.z, 0)); // z-axis
+                rotationMatrix.SetColumn(3, new Vector4(0, 0, 0, 1)); // z-axis
+
+                //Converting to Quaternion
+                Quaternion rotation = rotationMatrix.rotation;
+                rotation = new Quaternion(rotation.w, rotation.x, rotation.y, rotation.z);
+
+
+                for (int j = 0; j < numPtsEachTriangle; j++)
+                {
+                    List<float> scaleFactor = scales[i * numPtsEachTriangle + j];
+                    float x = math.log(GaMeSUtils.ReLU(scaleFactor[0] * s0) + eps_s0);
+                    float y = math.log(GaMeSUtils.ReLU(scaleFactor[0] * s1) + eps_s0);
+                    float z = math.log(GaMeSUtils.ReLU(scaleFactor[0] * s2) + eps_s0);
+                    scalings.Add(new Vector3(x, y, z));
+                    //broadcast rotations
+                    rotations.Add(rotation);
+
+                }
+
+
+            }
+
+            return (rotations, scalings);
+        }
+
+
+        private static List<Vector3> RGB2SH(List<Vector3> rgbs)
+        {
+            List<Vector3> shs = new List<Vector3>(rgbs.Count);
+
+
+            for (int i = 0; i < rgbs.Count; i++)
+            {
+                Vector3 rgb = rgbs[i];
+                Vector3 sh = new Vector3(
+                    (rgb.x - 0.5f) / C0,  // R -> SH conversion
+                    (rgb.y - 0.5f) / C0,  // G -> SH conversion
+                    (rgb.z - 0.5f) / C0   // B -> SH conversion
+                );
+                shs.Add(sh);
+            }
+
+            return shs;
+        }
+
+
+    }
     public static class GaMeSUtils
     {
-
         public static Mesh TransformMesh(Mesh sourceMesh,
-                                      bool rotate90X = true,
-                                      bool mirrorX = true,
-                                      bool flipWinding = true)
+                              bool rotate90X = true,
+                              bool mirrorX = true,
+                              bool flipWinding = true)
         {
             if (sourceMesh == null) return null;
 
@@ -186,7 +514,6 @@ namespace GaussianSplatting.Runtime.GaMeS
 
             [ReadOnly] public NativeArray<int> m_originalTriangleIndices;
 
-
             public unsafe void Execute(int i)
             {
 
@@ -309,28 +636,7 @@ namespace GaussianSplatting.Runtime.GaMeS
 
             return faceVertices;
         }
-        /*
-                public static NativeArray<float3> GetMeshFaceSelectedVerticesNative(NativeArray<float3> vertices, NativeArray<int> triangles, NativeArray<int> originalTriangleIndices, Allocator allocator)
-                {
-                    var faceVertices = new NativeArray<float3>(originalTriangleIndices.Length * 3, allocator);
 
-                    for (int i = 0; i < originalTriangleIndices.Length; i++)
-                    {
-                        int triIndex = originalTriangleIndices[i];
-                        int baseIdx = triIndex * 3;
-
-                        int i0 = triangles[baseIdx];
-                        int i1 = triangles[baseIdx + 1];
-                        int i2 = triangles[baseIdx + 2];
-
-                        faceVertices[i * 3 + 0] = TransformVertex(vertices[i0]);
-                        faceVertices[i * 3 + 1] = TransformVertex(vertices[i2]);
-                        faceVertices[i * 3 + 2] = TransformVertex(vertices[i1]);
-                    }
-
-                    return faceVertices;
-                }
-        */
         public static Vector3 TransformVertex(Vector3 v)
         {
             return new Vector3(
@@ -366,7 +672,6 @@ namespace GaussianSplatting.Runtime.GaMeS
             public int m_numberPtsPerTriangle;
             [NativeDisableParallelForRestriction] public NativeArray<float3> m_Output;
 
-
             public unsafe void Execute(int index)
             {
                 int triangleIndex = index / m_numberPtsPerTriangle;
@@ -383,8 +688,6 @@ namespace GaussianSplatting.Runtime.GaMeS
                 m_Output[index] = point;
             }
         }
-
-
 
         public static NativeArray<float3> CreateXYZDataSelected(NativeArray<float3> alphas, NativeArray<float3> selectedVertices, NativeArray<int> originalTriangleIndices, int numPtsEachTriangle)
         {
@@ -415,9 +718,7 @@ namespace GaussianSplatting.Runtime.GaMeS
             [ReadOnly] public NativeArray<float3> m_Vertices;
             public int m_numberPtsPerTriangle;
             [NativeDisableParallelForRestriction] public NativeArray<float3> m_Output;
-
             [ReadOnly] public NativeArray<int> m_originalTriangleIndices;
-
 
             public unsafe void Execute(int index)
             {

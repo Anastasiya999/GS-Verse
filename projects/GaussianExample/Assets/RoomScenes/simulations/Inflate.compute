@@ -32,7 +32,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
      // face-based mask (0 = face below anchor, 1 = face above)
     float faceMask = _FaceMask[i];
 
-    float inflate = _InflateAmount *  faceMask;
+    float inflate = _InflateAmount ;
 
 
     // Final inflation factor
@@ -42,5 +42,5 @@ void CSMain (uint3 id : SV_DispatchThreadID)
    // float inflate = _InflateAmount * t * anchorMask ;
 
 
-    _OutPositions[i] = p + n * inflate;
+    _OutPositions[i] = p + n * inflate * t;
 }

@@ -19,6 +19,7 @@ public class SplatAccessor : MonoBehaviour, IDeformable
 
     Mesh deformingMesh;
     public float springForce = 20f;
+    public float dragStrength = 100.0f;
     public bool blenderMesh = false;
     float uniformScale = 1f;
     public float damping = 5f;
@@ -47,19 +48,14 @@ public class SplatAccessor : MonoBehaviour, IDeformable
     NativeArray<float3> decodedAlphasNative;
     NativeArray<float> decodedScalesNative;
 
-
     private JobHandle createAssetJobHandle;
 
-
     private NativeArray<InputSplatData> inputSplatsData;
-
     private NativeArray<InputSplatData> runTimeInputSplatsData;
 
     private NativeArray<float3> xyzValues;
     private NativeArray<quaternion> rotations;
-
     private NativeArray<float3> scalings;
-
     private NativeArray<float3> faceVertices;
 
 
@@ -83,18 +79,13 @@ public class SplatAccessor : MonoBehaviour, IDeformable
     // Keep track of cleanup actions to run if initialization fails halfway.
     private readonly List<Action> _deferredCleanup = new List<Action>();
 
-    // runtime markers
-    private GameObject topMarker;
-    private GameObject bottomMarker;
-    [Header("Visualization")]
-    public Color topColor = Color.green;
-    public Color bottomColor = Color.red;
-    public float gizmoSphereRadius = 0.02f;
     public Vector3 minPointLocal;
     public Vector3 maxPointLocal;
     public Vector3 minPointWorld;
     public Vector3 maxPointWorld;
+
     private bool needsRebuild = true;
+
     [SerializeField] private float returnFinishEpsilon = 1e-4f;
 
     void Start()
@@ -120,34 +111,6 @@ public class SplatAccessor : MonoBehaviour, IDeformable
             if (r.gameObject.CompareTag(childTag)) return r;
         }
         return null;
-    }
-
-    public static void MirrorAlongY(Mesh mesh)
-    {
-        // Define mirror matrix (flip X)
-        Matrix4x4 mirrorMatrix = Matrix4x4.Scale(new Vector3(-1, 1, 1));
-
-        // Transform vertices
-        Vector3[] vertices = mesh.vertices;
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            vertices[i] = mirrorMatrix.MultiplyPoint3x4(vertices[i]);
-        }
-        mesh.vertices = vertices;
-
-        // Flip triangle winding (to keep normals outward)
-        int[] triangles = mesh.triangles;
-        for (int i = 0; i < triangles.Length; i += 3)
-        {
-            int temp = triangles[i + 1];
-            triangles[i + 1] = triangles[i + 2];
-            triangles[i + 2] = temp;
-        }
-        mesh.triangles = triangles;
-
-        // Recalculate normals & bounds
-        mesh.RecalculateNormals();
-        mesh.RecalculateBounds();
     }
 
     private void InitializeSafely()
@@ -183,26 +146,24 @@ public class SplatAccessor : MonoBehaviour, IDeformable
         decodedScalesNative = GaMeSUtils.DecodeScalesToNative(fileScaleBytes, gaussianGaMeSSplatAsset.splatCount, Allocator.Persistent);
         RegisterNativeCleanup(() => { if (decodedScalesNative.IsCreated) decodedScalesNative.Dispose(); });
 
-        // 4) Optional mesh replacement (Resources.Load) validation
-        if (!blenderMesh)
-        {
 
-            var loaded = Resources.Load<GameObject>(gaussianGaMeSSplatAsset.objPath);
+        var loaded = Resources.Load<GameObject>(gaussianGaMeSSplatAsset.objPath);
 
-            if (loaded == null)
-                throw new InvalidOperationException($"Resources.Load failed for path '{gaussianGaMeSSplatAsset.objPath}'.");
+        if (loaded == null)
+            throw new InvalidOperationException($"Resources.Load failed for path '{gaussianGaMeSSplatAsset.objPath}'.");
 
-            var child = loaded.transform.childCount > 0 ? loaded.transform.GetChild(0) : null;
-            if (child == null)
-                throw new InvalidOperationException("Loaded object from Resources has no children to get MeshFilter from.");
+        var child = loaded.transform.childCount > 0 ? loaded.transform.GetChild(0) : null;
+        if (child == null)
+            throw new InvalidOperationException("Loaded object from Resources has no children to get MeshFilter from.");
 
-            var meshFilter = child.GetComponent<MeshFilter>();
-            if (meshFilter == null || meshFilter.sharedMesh == null)
-                throw new InvalidOperationException("Child GameObject does not contain a MeshFilter with a sharedMesh.");
+        var meshFilter = child.GetComponent<MeshFilter>();
+        if (meshFilter == null || meshFilter.sharedMesh == null)
+            throw new InvalidOperationException("Child GameObject does not contain a MeshFilter with a sharedMesh.");
 
-            MeshFilter addedMeshFilter = gameObject.AddComponent<MeshFilter>();
-            addedMeshFilter.mesh = GaMeSUtils.TransformMesh(meshFilter.sharedMesh);
-        }
+
+        MeshFilter addedMeshFilter = gameObject.AddComponent<MeshFilter>();
+        //TODO: make blenderMesh as asset field(isLeftHandedCoordinateSystem)
+        addedMeshFilter.mesh = GaMeSUtils.TransformMesh(meshFilter.sharedMesh, blenderMesh);
 
         // 5) Disable child mesh renderers safely
         foreach (var mr in GetComponentsInChildren<MeshRenderer>())
@@ -218,7 +179,6 @@ public class SplatAccessor : MonoBehaviour, IDeformable
             throw new InvalidOperationException("Missing MeshFilter or mesh on this GameObject.");
 
         deformingMesh = mf.mesh;
-
 
         var verts = deformingMesh.vertices;
         var tris = deformingMesh.triangles;
@@ -278,6 +238,8 @@ public class SplatAccessor : MonoBehaviour, IDeformable
         // Clear deferred cleanup actions because initialization succeeded.
         _deferredCleanup.Clear();
     }
+
+
     private void InitializeSelectionMode()
     {
         float minY = float.MaxValue;
@@ -333,20 +295,16 @@ public class SplatAccessor : MonoBehaviour, IDeformable
         backgroundTriangleIndices = new NativeArray<int>(backgroundTriangleIndicesList.ToArray(), Allocator.Persistent);
         RegisterNativeCleanup(() => { if (backgroundTriangleIndices.IsCreated) backgroundTriangleIndices.Dispose(); });
 
-        // fill sets
+        SetVertexWeights(
+    vertexSet,
+    originalVertices,
+    minPointLocal,
+    maxPointLocal,
+    ref selectedVertexIndices,
+    ref selectedVertexWeights
+);
+
         int idx = 0;
-        int idx2 = 0;
-        float denom = maxPointLocal.y - minPointLocal.y;
-        if (math.abs(denom) < 1e-6f) denom = 1f;
-        foreach (int i in vertexSet)
-        {
-
-            selectedVertexIndices[idx++] = i;
-            float y = originalVertices[i].y;
-            selectedVertexWeights[idx2++] = math.clamp((y - minPointLocal.y) / denom, 0f, 1.0f);
-
-        }
-        idx = 0;
         foreach (int i in backgroundVertexSet) selectedBackgroundVertexIndices[idx++] = i;
 
         // Input allocations
@@ -407,47 +365,35 @@ public class SplatAccessor : MonoBehaviour, IDeformable
 
     }
 
-    //TODO: extract debug function
-    private void CreateOrUpdateRuntimeMarkers()
+    /// <summary>
+    /// Fills selected vertex indices and weights based on vertical position within the bounding box.
+    /// </summary>
+    private void SetVertexWeights(
+          HashSet<int> vertexSet,
+    NativeArray<float3> originalVertices,
+    float3 minPointLocal,
+    float3 maxPointLocal,
+    ref NativeArray<int> selectedVertexIndices,
+    ref NativeArray<float> selectedVertexWeights)
     {
-        // create marker helper
-        if (topMarker == null)
+        int idx = 0;
+        int idx2 = 0;
+        float denom = maxPointLocal.y - minPointLocal.y;
+        if (math.abs(denom) < 1e-6f) denom = 1f;
+
+        foreach (int i in vertexSet)
         {
-            topMarker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            topMarker.name = gameObject.name + "_TopMarker";
-            DestroyImmediate(topMarker.GetComponent<Collider>()); // no collider
-            topMarker.hideFlags = HideFlags.DontSaveInBuild | HideFlags.NotEditable;
+            selectedVertexIndices[idx++] = i;
+            float y = originalVertices[i].y;
+
+            float t = math.saturate((y - minPointLocal.y) / denom);
+
+            // adjust exponent: lower than 1 makes bottom looser, still clamps at 0
+            const float exponent = 0.5f; // 0.5 = sqrt, makes bottom looser
+            float weight = math.pow(t, exponent);
+
+            selectedVertexWeights[idx2++] = weight;
         }
-
-        if (bottomMarker == null)
-        {
-            bottomMarker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            bottomMarker.name = gameObject.name + "_BottomMarker";
-            DestroyImmediate(bottomMarker.GetComponent<Collider>());
-            bottomMarker.hideFlags = HideFlags.DontSaveInBuild | HideFlags.NotEditable;
-        }
-
-        topMarker.transform.position = maxPointWorld;
-        bottomMarker.transform.position = minPointWorld;
-
-        // scale markers to match gizmoSphereRadius (approximate)
-        float scale = gizmoSphereRadius * 2f;
-        topMarker.transform.localScale = new Vector3(scale, scale, scale);
-        bottomMarker.transform.localScale = new Vector3(scale, scale, scale);
-
-        // set marker colors (shared material to avoid leaking many materials)
-        SetMarkerColor(topMarker, topColor);
-        SetMarkerColor(bottomMarker, bottomColor);
-    }
-
-    private void SetMarkerColor(GameObject go, Color col)
-    {
-        var mr = go.GetComponent<MeshRenderer>();
-        if (mr == null) return;
-        // Use an instance material only once (small leak risk if frequently created; acceptable for debug helpers)
-        if (mr.sharedMaterial == null || mr.sharedMaterial.name == "Default-Material")
-            mr.sharedMaterial = new Material(Shader.Find("Standard"));
-        mr.sharedMaterial.color = col;
     }
 
 
@@ -480,19 +426,8 @@ public class SplatAccessor : MonoBehaviour, IDeformable
 
         }
         selectedVertexWeights = new NativeArray<float>(vertexSet.Count, Allocator.Persistent);
-        // fill sets
-        int idx = 0;
-        int idx2 = 0;
-        float denom = maxPointLocal.y - minPointLocal.y;
-        if (math.abs(denom) < 1e-6f) denom = 1f;
-        foreach (int i in vertexSet)
-        {
 
-            float y = originalVertices[i].y;
-            selectedVertexWeights[idx2++] = math.clamp((y - minPointLocal.y) / denom, 0f, 1f);
-
-        }
-
+        SetVertexWeights(vertexSet, originalVertices, minPointLocal, maxPointLocal, ref selectedVertexIndices, ref selectedVertexWeights);
 
         faceVertices = SplatMathUtils.GetMeshFaceVerticesNative(gameObject, displacedVertices, triangles, Allocator.Persistent);
         RegisterNativeCleanup(() => { if (faceVertices.IsCreated) faceVertices.Dispose(); });
@@ -562,7 +497,9 @@ public class SplatAccessor : MonoBehaviour, IDeformable
                     originalVertices = originalVertices,
                     vertexVelocities = vertexVelocities,
                     selectedVertexWeights = selectedVertexWeights,
-                    selectedVertexIndices = selectedVertexIndices
+                    selectedVertexIndices = selectedVertexIndices,
+                    topY = maxPointLocal.y,
+                    bottomY = minPointLocal.y
                 };
                 JobHandle handle = springJob.Schedule(selectedVertexIndices.Length, 64);
                 handle.Complete();
@@ -730,28 +667,6 @@ public class SplatAccessor : MonoBehaviour, IDeformable
             maxPointWorld = v2;
             maxPointLocal = local2;
             maxY = v2.y;
-        }
-    }
-
-    void ProcessDeformationInput()
-    {
-
-        if (isPressed)
-        {
-            var springJob = new VertexPressJobSelected
-            {
-                deltaTime = Time.deltaTime,
-                uniformScale = uniformScale,
-                damageMultiplier = 2.5f,
-                displacedVertices = displacedVertices,
-                originalVertices = originalVertices,
-                vertexVelocities = vertexVelocities,
-                selectedVertexIndices = selectedVertexIndices
-            };
-            JobHandle handle = springJob.Schedule(selectedVertexIndices.Length, 64);
-            handle.Complete();
-            isPressed = false;
-            needsRebuild = true;
         }
     }
 
@@ -1050,7 +965,6 @@ public class SplatAccessor : MonoBehaviour, IDeformable
             else
             {
                 Vector3 pointToVertex = displacedVertices[i] - (float3)pointLocal;
-                pointToVertex *= uniformScale;
 
                 float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
                 Vector3 appliedForce = force * attenuation * deltaTime;
@@ -1087,11 +1001,11 @@ public class SplatAccessor : MonoBehaviour, IDeformable
             else
             {
                 Vector3 pointToVertex = displacedVertices[i] - (float3)pointLocal;
-                pointToVertex *= uniformScale;
 
                 float attenuation = 1f / (1f + pointToVertex.sqrMagnitude);
                 Vector3 appliedForce = force * attenuation * deltaTime;
                 vertexVelocities[i] += (float3)appliedForce;
+
 
             }
 
@@ -1147,28 +1061,6 @@ public class SplatAccessor : MonoBehaviour, IDeformable
         }
     }
 
-    static float Falloff(float t)
-    {
-        // Example: smoothstep-like falloff
-        return t * t * (3f - 2f * t); // Smoothstep
-    }
-
-    public static float CalculateStretchFactor(Vector3 vertex, Vector3 anchorPoint, Vector3 originalTop, Vector3 stretchAxis)
-    {
-        Vector3 axis = stretchAxis.normalized;
-
-        float vertexDistance = Vector3.Dot(vertex - anchorPoint, axis);
-        float totalDistance = Vector3.Dot(originalTop - anchorPoint, axis);
-
-        if (totalDistance < 0.001f)
-        {
-            return 0;
-        }
-
-
-        return Mathf.Clamp01(vertexDistance / totalDistance);
-    }
-
 
     public void AddDeformingForce(Vector3 point, Vector3 force)
     {
@@ -1176,10 +1068,7 @@ public class SplatAccessor : MonoBehaviour, IDeformable
 
         Vector3 pointLocal = transform.InverseTransformPoint(point);
         Vector3 forceLocal = transform.InverseTransformDirection(force);
-        //forceLocal = new Vector3(forceLocal.z, forceLocal.y, forceLocal.x);
-        //pointLocal = new Vector3(pointLocal.z, pointLocal.y, pointLocal.x);
-
-
+        Debug.Log(force);
 
         if (IsSelectionMode())
         {
@@ -1217,31 +1106,9 @@ public class SplatAccessor : MonoBehaviour, IDeformable
     }
 
 
-    public void AddPressForce(Vector3 point, Vector3 pressNormal, float maxDeform, float radius, float damageFalloff)
+    public void AddPressForce(Vector3 point, Vector3 pressNormal)
     {
-        Vector3 pointLocal = transform.InverseTransformPoint(point);
 
-        if (IsSelectionMode())
-        {
-            var job = new AddPressForceJobSelected
-            {
-                displacedVertices = displacedVertices,
-                originalVertices = originalVertices,
-                vertexVelocities = vertexVelocities,
-                maxDeform = maxDeform,
-                damageFalloff = damageFalloff,
-                deformRadius = radius,
-                uniformScale = uniformScale,
-                selectedVertexIndices = selectedVertexIndices,
-                deltaTime = Time.deltaTime,
-                pointLocal = pointLocal
-            };
-
-            JobHandle handle = job.Schedule(selectedVertexIndices.Length, 64);
-            handle.Complete();
-        }
-
-        isPressed = true;
 
     }
 

@@ -1,199 +1,193 @@
-using System.Collections;
 using GaussianSplatting.Runtime;
 using GaussianSplatting.Shared;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using UnityEngine.XR.Interaction.Toolkit;
+using UnityEngine.XR.Interaction.Toolkit.Interactors;
 
 
 public class MeshStretcherController : MonoBehaviour
 {
-
     [Header("XR Setup")]
-    [Tooltip("The XR Ray Interactor on this controller.")]
-    public UnityEngine.XR.Interaction.Toolkit.Interactors.XRRayInteractor rayInteractor;
-    [Tooltip("Input Action for the trigger or button press (e.g., Select).")]
-    public InputActionReference stretchActionReference;
-    public InputActionReference pressActionReference;
+    public XRRayInteractor rayInteractorL;
+    public XRRayInteractor rayInteractorR;
 
-    public Transform leftController; // assign in Inspector
+    public InputActionReference stretchActionReferenceL;
+    public InputActionReference pressActionReferenceL;
 
+    public InputActionReference stretchActionReferenceR;
+    public InputActionReference pressActionReferenceR;
 
     [Header("Deformation Settings")]
-    [Tooltip("Offset from the hit surface along the normal to apply the force.")]
     public float forceOffset = 0.01f;
-    [Tooltip("Multiplier for the drag force calculation.")]
     public float dragStrength = 100f;
-    private IDeformable currentDeformer;
-    private Vector3? lastXRHitPoint;
-    bool isFirstFrameAfterClick = false;
-    private float? lockedInteractionDistance;
-
-
-    public PressSphere pressSphere;
-
     public float rayLength = 5f;
 
-
-    void Awake()
-    {
-        if (rayInteractor == null)
-        {
-            rayInteractor = GetComponent<UnityEngine.XR.Interaction.Toolkit.Interactors.XRRayInteractor>();
-            if (rayInteractor == null)
-            {
-
-                enabled = false;
-                return;
-            }
-        }
-
-    }
+    // Track separate state for each hand
+    private HandState leftHand = new HandState();
+    private HandState rightHand = new HandState();
 
     void Start()
     {
-        stretchActionReference.action.started += ctx => OnActionStarted(ForceMode.Drag);
-        stretchActionReference.action.canceled += ctx => OnActionCanceled(ForceMode.Drag);
+        SubscribeInput(stretchActionReferenceL, ForceMode.Drag, leftHand);
+        SubscribeInput(pressActionReferenceL, ForceMode.Press, leftHand);
 
-        pressActionReference.action.started += ctx => OnActionStarted(ForceMode.Press);
-        pressActionReference.action.canceled += ctx => OnActionCanceled(ForceMode.Press);
+        SubscribeInput(stretchActionReferenceR, ForceMode.Drag, rightHand);
+        SubscribeInput(pressActionReferenceR, ForceMode.Press, rightHand);
+
+     
+        leftHand.interactor = rayInteractorL;
+        leftHand.stretchAction = stretchActionReferenceL;
+        leftHand.pressAction = pressActionReferenceL;
+
+        rightHand.interactor = rayInteractorR;
+        rightHand.stretchAction = stretchActionReferenceR;
+        rightHand.pressAction = pressActionReferenceR;
     }
 
     void OnDisable()
     {
-        stretchActionReference.action.started -= ctx => OnActionStarted(ForceMode.Drag);
-        stretchActionReference.action.canceled -= ctx => OnActionCanceled(ForceMode.Drag);
+        UnsubscribeInput(stretchActionReferenceL, ForceMode.Drag, leftHand);
+        UnsubscribeInput(pressActionReferenceL, ForceMode.Press, leftHand);
 
-        pressActionReference.action.started -= ctx => OnActionStarted(ForceMode.Press);
-        pressActionReference.action.canceled -= ctx => OnActionCanceled(ForceMode.Press);
-
-
-        ResetDeformationState();
+        UnsubscribeInput(stretchActionReferenceR, ForceMode.Drag, rightHand);
+        UnsubscribeInput(pressActionReferenceR, ForceMode.Press, rightHand);
     }
 
     void Update()
     {
-        var currentMode = ForceModeManager.Instance.CurrentForceMode;
+        ProcessHand(leftHand);
+        ProcessHand(rightHand);
+    }
 
-        switch (currentMode)
+    private void ProcessHand(HandState hand)
+    {
+        switch (hand.currentMode)
         {
             case ForceMode.Press:
-                ProcessPressDeformation();
+                ProcessPressDeformation(hand);
                 break;
             case ForceMode.Drag:
-                ProcessRayInteraction();
+                ProcessRayInteraction(hand);
                 break;
         }
     }
 
-
-    private void OnActionStarted(ForceMode mode)
+    private void SubscribeInput(InputActionReference actionRef, ForceMode mode, HandState hand)
     {
+        if (actionRef == null) return;
+
+        actionRef.action.started += ctx => OnActionStarted(mode, hand);
+        actionRef.action.canceled += ctx => OnActionCanceled(mode, hand);
+    }
+
+    private void UnsubscribeInput(InputActionReference actionRef, ForceMode mode, HandState hand)
+    {
+        if (actionRef == null) return;
+
+        actionRef.action.started -= ctx => OnActionStarted(mode, hand);
+        actionRef.action.canceled -= ctx => OnActionCanceled(mode, hand);
+    }
+
+    private void OnActionStarted(ForceMode mode, HandState hand)
+    {
+        hand.currentMode = mode;
+        hand.isFirstFrameAfterClick = true;
         ForceModeManager.Instance.SetForceMode(mode);
-        isFirstFrameAfterClick = true;
     }
 
-    private void OnActionCanceled(ForceMode mode)
+    private void OnActionCanceled(ForceMode mode, HandState hand)
     {
-        if (ForceModeManager.Instance.CurrentForceMode == mode)
+        if (hand.currentMode == mode)
         {
-            ForceModeManager.Instance.SetForceMode(ForceMode.None);
+            hand.currentMode = ForceMode.None;
+            hand.Reset();
 
-            ResetDeformationState();
-        }
-    }
-    void ProcessPressDeformation()
-    {
-        Ray ray = new Ray(leftController.position, leftController.forward);
-
-        if (Physics.Raycast(ray, out RaycastHit hit, rayLength))
-        {
-            IDeformable deformerOnHit = hit.collider.GetComponent<IDeformable>();
-
-            if (deformerOnHit != null)
+            if (ForceModeManager.Instance.CurrentForceMode == mode)
             {
-                // Optional: scale press force by trigger value
-                float pressStrength = pressActionReference.action.ReadValue<float>();
-
-                // Add press deformation (radius, intensity, falloff could be tweaked)
-                deformerOnHit.AddPressForce(
-                    hit.point,
-                    hit.normal,
-                    0.85f * pressStrength,   // maxdeform
-                    0.85f * pressStrength,    // radius
-                    1.0f                     // falloff
-                );
+                ForceModeManager.Instance.SetForceMode(ForceMode.None);
             }
         }
     }
-    void ProcessRayInteraction()
-    {
 
-        if (currentDeformer == null)
+    private void ProcessPressDeformation(HandState hand)
+    {
+        if (hand.interactor != null && hand.interactor.TryGetCurrent3DRaycastHit(out RaycastHit hit))
         {
-            // First-time hit detection
-            if (rayInteractor.TryGetCurrent3DRaycastHit(out RaycastHit hitInfo))
+            IDeformable deformer = hit.collider.GetComponent<IDeformable>();
+
+            if (deformer != null)
+            {
+                float pressStrength = hand.pressAction?.action?.ReadValue<float>() ?? 1f;
+                deformer.AddPressForce(hit.point, hit.normal);
+            }
+        }
+    }
+
+    private void ProcessRayInteraction(HandState hand)
+    {
+        if (hand.interactor == null)
+            return;
+
+        if (hand.currentDeformer == null)
+        {
+            if (hand.interactor.TryGetCurrent3DRaycastHit(out RaycastHit hitInfo))
             {
                 IDeformable deformerOnHit = hitInfo.collider.GetComponentInParent<IDeformable>();
 
                 if (deformerOnHit != null)
                 {
-
-                    currentDeformer = deformerOnHit;
-
-                    // Lock interaction distance
-                    lockedInteractionDistance = hitInfo.distance;
-
-                    // Store initial point IN WORLD SPACE (simpler & less prone to scale bugs)
-                    Vector3 initialHitPointWorld = hitInfo.point + hitInfo.normal * forceOffset;
-                    lastXRHitPoint = initialHitPointWorld;
+                    hand.currentDeformer = deformerOnHit;
+                    hand.lockedDistance = hitInfo.distance;
+                    hand.lastHitPoint = hitInfo.point + hitInfo.normal * forceOffset;
                 }
             }
         }
-        else if (lockedInteractionDistance.HasValue)
+        else if (hand.lockedDistance.HasValue)
         {
-            // Skip applying force if it's the first frame after click
-            if (isFirstFrameAfterClick)
+            if (hand.isFirstFrameAfterClick)
             {
-                isFirstFrameAfterClick = false;
+                hand.isFirstFrameAfterClick = false;
+                hand.lastHitPoint = hand.interactor.rayOriginTransform.position + hand.interactor.rayOriginTransform.forward * hand.lockedDistance.Value;
                 return;
             }
 
-            Transform rayTransform = rayInteractor.rayOriginTransform;
-            Vector3 currentVirtualPointWorld = rayTransform.position + rayTransform.forward * lockedInteractionDistance.Value;
+            Vector3 currentPoint = hand.interactor.rayOriginTransform.position + hand.interactor.rayOriginTransform.forward * hand.lockedDistance.Value;
 
-            if (lastXRHitPoint.HasValue)
+            if (hand.lastHitPoint.HasValue)
             {
-                // Compute world-space drag
-                Vector3 worldDrag = currentVirtualPointWorld - lastXRHitPoint.Value;
+                Vector3 drag = currentPoint - hand.lastHitPoint.Value;
+                float triggerValue = hand.stretchAction?.action?.ReadValue<float>() ?? 1f;
 
-                float triggerValue = 1f;
-                if (stretchActionReference != null && stretchActionReference.action != null)
-                {
-                    // If the action is analog (0..1), use it; if not, this returns 0/1 depending on binding
-                    triggerValue = stretchActionReference.action.ReadValue<float>();
-                }
+               
+                Vector3 worldForce = drag * dragStrength * triggerValue;
 
-                // Build world force
-                Vector3 worldForce = worldDrag * dragStrength * triggerValue;
-
-
-                currentDeformer.AddDeformingForce(currentVirtualPointWorld, worldForce);
-
-
+                hand.currentDeformer.AddDeformingForce(currentPoint, worldForce);
+              
             }
 
-            // Update last world-space point
-            lastXRHitPoint = currentVirtualPointWorld;
+            hand.lastHitPoint = currentPoint;
         }
     }
 
-    private void ResetDeformationState()
+    // Helper class to track each hand’s state
+    private class HandState
     {
-        lastXRHitPoint = null;
-        currentDeformer = null;
+        public XRRayInteractor interactor;
+        public InputActionReference stretchAction;
+        public InputActionReference pressAction;
+
+        public ForceMode currentMode = ForceMode.None;
+        public IDeformable currentDeformer;
+        public Vector3? lastHitPoint;
+        public float? lockedDistance;
+        public bool isFirstFrameAfterClick = false;
+
+        public void Reset()
+        {
+            currentDeformer = null;
+            lastHitPoint = null;
+            lockedDistance = null;
+            isFirstFrameAfterClick = false;
+        }
     }
-
-
 }

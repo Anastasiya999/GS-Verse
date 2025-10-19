@@ -10,6 +10,7 @@ namespace GaussianSplatting.Runtime
         string pointCloudPath { get; }
         TextAsset alphaData { get; }
         TextAsset scaleData { get; }
+        bool useMeshLeftHandedCS { get; }
 
         void SetObjPath(string path);
         void SetNumberOfSplatsPerFace(int numberOfSplats);

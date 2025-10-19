@@ -7,7 +7,7 @@ namespace GaussianSplatting.Shared
     public interface IDeformable
     {
         // Short tap / press behavior
-        void AddPressForce(Vector3 worldPoint, Vector3 pressNormal, float a, float b, float c);
+        void AddPressForce(Vector3 worldPoint, Vector3 pressNormal);
 
         // Continuous dragging/deforming behavior
         void AddDeformingForce(Vector3 worldPoint, Vector3 worldForce);
