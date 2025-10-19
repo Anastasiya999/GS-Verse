@@ -42,7 +42,7 @@ public class SplatDeformate : MonoBehaviour, IDeformable
         catch (Exception ex)
         {
             RunDeferredCleanup();
-            throw;
+            throw ex;
         }
 
 

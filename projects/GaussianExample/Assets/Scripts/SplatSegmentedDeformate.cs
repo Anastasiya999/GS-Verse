@@ -44,7 +44,7 @@ public class SplatSegmentedDeformate : MonoBehaviour, IDeformable
         catch (Exception ex)
         {
             RunDeferredCleanup();
-            throw;
+            throw ex;
         }
 
     }

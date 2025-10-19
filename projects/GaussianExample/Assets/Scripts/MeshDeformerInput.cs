@@ -10,11 +10,8 @@ public class MeshDeformerInput : MonoBehaviour
     public float forceOffset = 0.01f;
     Vector3? lastHitPoint = null;
     private SplatAccessor lastDeformer = null;
-    Vector3? lastMouseWorldPoint = null;
     public float dragStrength = 100f;
     public Transform anchorPoint;
-
-    private float? anchorDistance = null;
     private float? lockedInteractionDistance;
 
     private Vector3 lastMousePosition;

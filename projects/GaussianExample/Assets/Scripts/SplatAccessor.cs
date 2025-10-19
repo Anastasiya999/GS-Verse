@@ -31,8 +31,6 @@ public class SplatAccessor : MonoBehaviour, IDeformable
 
     private bool isClicked = false;
 
-    private bool isPressed = false;
-
 
     private NativeArray<int> selectedVertexIndices;
     private NativeArray<float> selectedVertexWeights;
