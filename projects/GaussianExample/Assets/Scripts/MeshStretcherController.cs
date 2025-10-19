@@ -34,7 +34,7 @@ public class MeshStretcherController : MonoBehaviour
         SubscribeInput(stretchActionReferenceR, ForceMode.Drag, rightHand);
         SubscribeInput(pressActionReferenceR, ForceMode.Press, rightHand);
 
-     
+
         leftHand.interactor = rayInteractorL;
         leftHand.stretchAction = stretchActionReferenceL;
         leftHand.pressAction = pressActionReferenceL;
@@ -133,7 +133,6 @@ public class MeshStretcherController : MonoBehaviour
             if (hand.interactor.TryGetCurrent3DRaycastHit(out RaycastHit hitInfo))
             {
                 IDeformable deformerOnHit = hitInfo.collider.GetComponentInParent<IDeformable>();
-
                 if (deformerOnHit != null)
                 {
                     hand.currentDeformer = deformerOnHit;
@@ -158,18 +157,18 @@ public class MeshStretcherController : MonoBehaviour
                 Vector3 drag = currentPoint - hand.lastHitPoint.Value;
                 float triggerValue = hand.stretchAction?.action?.ReadValue<float>() ?? 1f;
 
-               
+
                 Vector3 worldForce = drag * dragStrength * triggerValue;
 
                 hand.currentDeformer.AddDeformingForce(currentPoint, worldForce);
-              
+
             }
 
             hand.lastHitPoint = currentPoint;
         }
     }
 
-    // Helper class to track each hand’s state
+    // Helper class to track each handï¿½s state
     private class HandState
     {
         public XRRayInteractor interactor;

@@ -34,9 +34,7 @@ public class XRTriggerRotate : MonoBehaviour
 
     public void OnFirstHover(HoverEnterEventArgs args)
     {
-
         isSwing = true;
-
     }
 
     public void OnHoverExit(HoverExitEventArgs args)
@@ -52,12 +50,6 @@ public class XRTriggerRotate : MonoBehaviour
 
     void Update()
     {
-        float triggerValueLeft = triggerActionLeft.action.ReadValue<float>();
-        float triggerValueRight = triggerActionRight.action.ReadValue<float>();
-        float triggerValue = Mathf.Max(triggerValueLeft, triggerValueRight);
-
-
-
         if (isSwing)
         {
             if (!isLighten)
@@ -79,9 +71,5 @@ public class XRTriggerRotate : MonoBehaviour
             float angle = limit * Mathf.Sin(Time.time);
             transform.localRotation = Quaternion.Euler(angle, 0, 0);
         }
-
-
-
-
     }
 }

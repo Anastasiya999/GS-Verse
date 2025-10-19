@@ -270,6 +270,7 @@ public class SplatSegmentedDeformate : MonoBehaviour, IDeformable
 
         if (!displacedVertices.IsCreated || !originalVertices.IsCreated || !vertexVelocities.IsCreated)
         {
+            Debug.Log("not adding force");
             return;
         }
 
