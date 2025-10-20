@@ -5,13 +5,15 @@ This repository hosts the **official implementation** of the paper:
 > _Authors_: Anastasiya Pechko, Piotr Borycki, Joanna Waczynska, Daniel Barczyk, Agata Szymańska, Sławomir Tadeja, Przemysław Spurek.  
 > _2025_  
 
+<<<<<<< Updated upstream
 
 ## Acknowledgment
 
 This project was developed based on an existing [Gaussian Splatting playground in Unity](https://github.com/aras-p/UnityGaussianSplatting).  
+=======
+This project was developed based on an existing [Gaussian Splatting playground in Unity](https://github.com/aras-p/UnityGaussianSplatting). 
+>>>>>>> Stashed changes
 For detailed implementation notes and additional context, see the related [README](/projects/readme.md).
-
----
 
 ## Table of Contents
 
@@ -87,6 +89,14 @@ To test the sample scene, open **`RoomScenes/darkRoom/364.unity`**.
   - **Stretch the fox** → Press `B` and move the mouse  
   - **Move the chair** → Press `G` and use the mouse to translate it  
   - **Swing the lamp** → Hover over the lamp with the controller ray and click the mouse to trigger the *Select* event
+ 
+## Acknowledgments
+The code was developed based on an existing [Gaussian Splatting playground in Unity](https://github.com/aras-p/UnityGaussianSplatting), [gaussian-splatting](https://github.com/graphdeco-inria/gaussian-splatting) (3D) and [GaMeS](https://github.com/waczjoan/gaussian-mesh-splatting).
+
+The project “Effective rendering of 3D objects using Gaussian Splatting in an Augmented Reality environment” (FENG.02.02-IP.05-0114/23) is carried out within the First Team programme of the Foundation for Polish Science co-financed by the European Union under the European Funds for Smart Economy 2021-2027 (FENG).
+<div align="center">
+<img src="docs/Images/fnp.png" />
+</div>
 
 ### Licence
 
