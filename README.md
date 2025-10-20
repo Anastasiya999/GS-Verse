@@ -79,7 +79,7 @@ Our project relies on the **exact face order**, so please ensure that every asse
 If not, adjust the settings to match the configuration shown in the following screenshot and click **Apply**:  
 <img src="docs/Images/shotMeshInspector.png" alt="Screenshot" width="300"/>
 
-To test the sample scene, open **`RoomScenes/darkRoom/363.unity`**.
+To test the sample scene, open **`RoomScenes/darkRoom/364.unity`**.
 
 - If you are using a **real device**, uncheck **XR Device Simulator** in the scene.  
 - If you are using the **simulator**, use the following controller mappings:
