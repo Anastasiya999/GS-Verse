@@ -16,11 +16,11 @@ For detailed implementation notes and additional context, see the related [READM
 
 1. [Abstract](#abstract)  
 2. [Prerequisites](#prerequisites)  
-3. [Setup](#setup)
-4. [Usage](#usage)  
-5. [Asset creation](#asset-creation)
-6. [Video tuitorial (soon)](#video-tutorial)
-7. [Segmenation & deformation tips (soon)](#segmentation-deformation)
+3. [Setup](#setup) 
+4. [Asset creation](#asset-creation)
+5. [Video tutorial (soon)](#video-tutorial)
+6. [Segmenation & deformation tips (soon)](#segmentation-deformation)
+7. [Acknowledgments](#license) 
 8. [License](#license)  
 
 ## Abstract 
@@ -207,10 +207,11 @@ Now you can create your first **GS Verse** asset.
 The code was developed based on an existing [Gaussian Splatting playground in Unity](https://github.com/aras-p/UnityGaussianSplatting), [gaussian-splatting](https://github.com/graphdeco-inria/gaussian-splatting) (3D) and [GaMeS](https://github.com/waczjoan/gaussian-mesh-splatting).
 
 The project “Effective rendering of 3D objects using Gaussian Splatting in an Augmented Reality environment” (FENG.02.02-IP.05-0114/23) is carried out within the First Team programme of the Foundation for Polish Science co-financed by the European Union under the European Funds for Smart Economy 2021-2027 (FENG).
+
 <div align="center">
 <img src="docs/Images/fnp.png" />
 </div>
 
-### Licence
+## Licence
 
 Please refer to the [original project Licence](https://github.com/aras-p/UnityGaussianSplatting?tab=readme-ov-file#license-and-external-code-used)
