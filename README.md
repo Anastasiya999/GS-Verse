@@ -55,9 +55,6 @@ For the **user study**, the GS systems were deployed on a desktop PC equipped wi
 git clone https://github.com/Anastasiya999/GS-Verse.git
 cd GS-Verse
 ```
-Open `projects/GaussianExample` as a Unity project ( Unity 2022.3 version is used, but other versions might also work). Since the gaussian splat models are quite large, we have not included any in this Github repo. In order to test sample scenes, please download [link to zip on drive]. Place RoomScenes/* content under the Assets/RoomScenes and put Resources folder under Assets/ folder.
-Open the project located at projects/GaussianExample in Unity 2022.3 (other Unity 2022 versions may also work).
-
 Open the project located at `projects/GaussianExample` in **Unity 2022.3** (other Unity 2022 versions may also work).
 
 Since the Gaussian Splat models are quite large, they are **not included** in this GitHub repository.
@@ -82,7 +79,7 @@ Our project relies on the **exact face order**, so please ensure that every asse
 If not, adjust the settings to match the configuration shown in the following screenshot and click **Apply**:  
 <img src="docs/Images/shotMeshInspector.png" alt="Screenshot" width="300"/>
 
-To test the sample scene, open **`RoomScenes/darkRoom/363.unity`**.
+To test the sample scene, open **`RoomScenes/darkRoom/364.unity`**.
 
 - If you are using a **real device**, uncheck **XR Device Simulator** in the scene.  
 - If you are using the **simulator**, use the following controller mappings:
@@ -109,10 +106,10 @@ If you already have a COLMAP dataset, you can generate a mesh using the **SuGaR*
 Please refer to the SuGaR [README](https://github.com/Anttwo/SuGaR?tab=readme-ov-file#sugar-surface-aligned-gaussian-splatting-for-efficient-3d-mesh-reconstruction-and-high-quality-mesh-rendering) for installation and usage details.  
 Make sure to include the `--low_poly` argument for simplified geometry.
 
-**Example command (for the Garden dataset):**
+**Example command (for the SuGaR model):**
 ```bash
 python train_full_pipeline.py \
-  -s colmap_garden \
+  -s colmap_dataset \
   -r dn_consistency \
   --low_poly True \
   --export_obj True
@@ -121,12 +118,12 @@ Once you have generated `mesh.obj` using SuGaR, you can run the GaMeS model to e
 
 Refer to **[Scenario I](https://github.com/waczjoan/gaussian-mesh-splatting?tab=readme-ov-file#scenario-i-mesh-initialized-input)** in the GaMeS documentation for details.
 
-**Example command (for the Bear dataset)**:
+**Example command (for the GaMeS model)**:
 
 ```bash
 python train.py \
-  -s mesh_bear_data \
-  -m output/bear_5splats_gs_mesh \
+  -s mesh_data \
+  -m output/mesh_5splats_per_face \
   --gs_type gs_multi_mesh \
   --meshes mesh \
   --num_splats 5 \
@@ -134,13 +131,13 @@ python train.py \
   -w
 ```
 > **Note:**  
-> The `mesh_bear_data` folder should contain your COLMAP dataset.  
-> Be sure to place the `mesh.obj` file inside `mesh_bear_data/sparse/0`.
+> The `mesh_data` folder should contain your COLMAP dataset.  
+> Be sure to place the `mesh.obj` file inside `mesh_data/sparse/0`.
 
 **Example Folder Structure**
 
 ```css
-mesh_bear_data/
+mesh_data/
  ├── images/
  │    └── [multiview images]
  ├── camera_paths/
@@ -154,24 +151,24 @@ Simply run it in the same directory where your `model_params.pt` file is located
 
 ---
 
-### Case II: Trellis (a single reference image)
+### Case II: TRELLIS (a single reference image)
 
 If you have only a **single reference image** or want to generate a **text-to-image** asset, you can use the ([TRELLIS model](https://github.com/microsoft/TRELLIS?tab=readme-ov-file#structured-3d-latentsfor-scalable-and-versatile-3d-generation)).
 
 Once you have obtained a **3D mesh**, you can use **Blender** to generate a NeRF Synthetic Dataset.
-Please refer to BlenderNeRF [BlenderNeRF](https://github.com/maximeraafat/BlenderNeRF?tab=readme-ov-file#blendernerf) for setup and detailed instructions. 
+Please refer to [BlenderNeRF](https://github.com/maximeraafat/BlenderNeRF?tab=readme-ov-file#blendernerf) for setup and detailed instructions. 
 
 Export the mesh from Blender in left-handed coordinate system, and use the generated NeRF Synthetic Dataset to prepare the input folder as described in **[Scenario I](https://github.com/waczjoan/gaussian-mesh-splatting?tab=readme-ov-file#scenario-i-mesh-initialized-input)**. 
 
 > ⚠️ **Warning:**  
 > We have noticed some inconsistencies between meshes obtained from **SuGaR** and **TRELLIS**.  
-> To ensure uniformity, please re-export **TRELLIS** the mesh using the script:  
+> To ensure uniformity, please re-export the **TRELLIS** mesh using the script:  
 > `scripts/reexport_mesh.py`
 
-Example command (for the Chair dataset):
+Example command (for the GaMeS model):
 
 ```bash
-python train.py --eval -s mesh_chair_data -m output/mesh_chair_data --gs_type gs_mesh --num_splats 5 -w
+python train.py --eval -s mesh_data -m output/mesh_5splats_per_face --gs_type gs_mesh --num_splats 5 -w
 ```
 Once you have trained your model, use the script `scripts/import_params.py` to extract parameters into a JSON file as in Case I.
 
