@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="GS-Verse">
+    <meta name="keywords"
+        content="GS-Verse: Mesh-based Gaussian Splatting for Physics-aware Interaction in Virtual Reality">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GS-Verse</title>
+
+    <style>
+        .hr {
+            width: 100%;
+            height: 1px;
+            margin: 48px 0;
+            background-color: #d6dbdf;
+        }
+    </style>
+
+    <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
+    <link rel="stylesheet" href="./assets/css/bulma.min.css">
+    <link rel="stylesheet" href="./assets/css/bulma-carousel.min.css">
+    <link rel="stylesheet" href="./assets/css/bulma-slider.min.css">
+    <link rel="stylesheet" href="./assets/css/fontawesome.all.min.css">
+    <link rel="stylesheet" href="./assets/css/index.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+
+    <!-- custom css file  -->
+    <link rel="stylesheet" href="./assets/css/style.css">
+    <link rel="stylesheet" href="./assets/css/twentytwenty.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+</head>
+
+<body>
+
+    <section class="hero">
+        <div class="hero-body">
+            <div class="container is-max-desktop head">
+                <div class="columns is-centered">
+                    <div class="column has-text-centered head">
+
+
+                        <h1 class="title publication-title centered">
+                            <font color="#8e43e7">GS-Verse</font>: Mesh-based Gaussian Splatting for Physics-aware
+                            Interaction in Virtual Reality
+                        </h1>
+
+
+
+                        <div class="is-size-5 publication-authors">
+                            <span class="author-block">
+                                <a href="https://shangchenzhou.com/">Anastasiya
+                                    Pechko</a><sup>1</sup>,&nbsp;&nbsp;</span>
+                            <span class="author-block">
+                                <a href="https://li-chongyi.github.io/">Piotr
+                                    Borycki</a><sup>1</sup>,&nbsp;&nbsp;</span>
+                            <span class="author-block">
+                                <a href="https://ckkelvinchan.github.io/">Joanna
+                                    Waczyńska</a><sup>1</sup>,&nbsp;&nbsp;</span>
+                            <span class="author-block">
+                                <a href="https://www.mmlab-ntu.com/person/ccloy/">Daniel
+                                    Barczyk</a><sup>1</sup>,&nbsp;&nbsp;</span></span>
+                            <span class="author-block">
+                                <a href="https://www.mmlab-ntu.com/person/ccloy/">Sławomir
+                                    Tadeja</a><sup>2</sup>,&nbsp;&nbsp;</span></span>
+                            <span class="author-block">
+                                <a href="https://www.mmlab-ntu.com/person/ccloy/">Przemysław
+                                    Spurek</a><sup>1</sup></span>
+                        </div>
+
+                        <div class="is-size-5 publication-authors">
+                            <span class="author-block"><sup>1</sup>Jagiellonian University,</span>
+                            <span class="author-block"><sup>2</sup>University of Cambridge</span><br>
+                        </div>
+
+                        <div class="column has-text-centered">
+                            <div class="publication-links">
+                                <!-- arXiv Link. -->
+                                <span class="link-block">
+                                    <a href="https://arxiv.org/abs/2510.11878" target="_blank"
+                                        class="external-link button is-normal is-rounded is-dark">
+                                        <span class="icon">
+                                            <i class="ai ai-arxiv"></i>
+                                        </span>
+                                        <span>arXiv</span>
+                                    </a>
+                                </span>
+
+                                <!-- Code Link. -->
+                                <span class="link-block">
+                                    <a href="https://github.com/Anastasiya999/GS-Verse" target="_blank"
+                                        class="external-link button is-normal is-rounded is-dark">
+                                        <span class="icon">
+                                            <i class="fab fa-github"></i>
+                                        </span>
+                                        <span>Code</span>
+                                    </a>
+                                </span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="teaser">
+        <div class="container is-max-desktop">
+            <div class="columns is-centered has-text-centered">
+                <!-- <div class="column is-four-fifths"> -->
+                <div class="column">
+                    <img src="./assets/images/Teaser.png" />
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <section class="section">
+        <div class="container is-max-desktop">
+            <!-- Abstract. -->
+            <div class="columns is-centered has-text-centered">
+                <div class="column is-four-fifths">
+                    <!-- <div class="column"> -->
+                    <h2 class="title is-3">Abstract</h2>
+                    <div class="content has-text-justified">
+                        <p>
+                            As the demand for immersive 3D content grows, the need for intuitive and efficient
+                            interaction methods becomes paramount. Current techniques for physically
+                            manipulating 3D content within Virtual Reality (VR) often face significant limitations,
+                            including reliance on engineering-intensive processes and simplified geometric
+                            representations, such as tetrahedral cages, which can compromise visual
+                            fidelity and physical accuracy. In this paper, we introduce GS-Verse (Gaussian
+                            Splatting for Virtual Environment Rendering and Scene Editing), a novel method
+                            designed to overcome these challenges by directly integrating an object’s mesh
+                            with a Gaussian Splatting (GS) representation. Our approach enables more precise surface
+                            approximation, leading to highly realistic deformations and interactions. By leveraging
+                            existing 3D mesh assets, GS-Verse facilitates seamless content reuse and simplifies the
+                            development workflow. Moreover, our system is designed to be physics-engine-agnostic,
+                            granting developers robust deployment flexibility. This versatile architecture delivers a
+                            highly realistic, adaptable, and intuitive approach to interactive 3D manipulation. We
+                            rigorously validate our method
+                            against the current state-of-the-art technique that couples VR with GS in a comparative user
+                            study involving 18 participants. Specifically, we demonstrate that our
+                            approach is statistically significantly better for physics-aware stretching manipulation and
+                            is also more consistent in other physics-based manipulations like twisting and shaking.
+                            Further evaluation across various interactions and scenes confirms that our method
+                            consistently delivers high and reliable performance, showing its potential as a plausible
+                            alternative to existing methods
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <!--/ Abstract. -->
+        </div>
+    </section>
+
+
+    <section class="section">
+        <div class="container is-max-desktop">
+            <div class="columns is-centered has-text-centered">
+                <!-- <div class="column is-four-fifths"> -->
+                <div class="column">
+                    <h2 class="title is-3">Method</h2>
+                    <div class="content has-text-justified">
+                        <p>
+                            GS-Verse enables real-time interaction
+                            in VR by generating mesh-based Gaussian Splatting assets. The processing pipeline begins
+                            with
+                            multiview image scene reconstruction, followed by mesh extraction using SuGaR or Trellis. A
+                            subsequent segmentation step optimizes the scene by dividing it into dynamic and static
+                            components.
+                            Thanks to mesh-based parameterization via GaMeS, the resulting representations can be
+                            seamlessly
+                            integrated into physics-aware engines such as Unity, enabling efficient and physically
+                            consistent VR
+                            interactions.
+                        </p>
+                        <div class="column">
+                            <img src="./assets/images/Method.png" />
+                        </div>
+                    </div>
+                    <!-- Paper video. -->
+                    <div class="column">
+                        <h2 class="title is-3">Videos</h2>
+                        <div class="videos">
+                            <div>
+                                <video muted autoplay="autoplay" playsInline loop="loop">
+                                    <source src="./assets/videos_reduced/Trimmed_garden.mp4" type="video/mp4">
+                                </video>
+                            </div>
+                            <div>
+
+                                <video muted autoplay="autoplay" playsInline loop="loop">
+                                    <source src="./assets/videos_reduced/Trimmed_fox.mp4" type="video/mp4">
+                                </video>
+                            </div>
+                            <div>
+                                <video muted autoplay="autoplay" playsInline loop="loop">
+                                    <source src="./assets/videos_reduced/trimmed_toycar.mp4" type="video/mp4">
+                                </video>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <footer class="footer">
+        <div class="container">
+            <div class="content has-text-centered">
+                <a class="icon-link" href="https://arxiv.org/abs/2510.11878" target="_blank">
+                    <i class="fas fa-file-pdf"></i>
+                </a>
+                <a class="icon-link" href="https://github.com/Anastasiya999/GS-Verse" target="_blank">
+                    <i class="fab fa-github"></i>
+                </a>
+
+            </div>
+
+            <div class="columns is-centered">
+                <div class="column is-8">
+                    <div class="content">
+                        <div class="columns is-centered">
+                            <p>
+                                This website template is borrowed from <a
+                                    href="https://github.com/nerfies/nerfies.github.io" target="_blank">Here</a>.
+                                Feel free to clone this website's <a href="https://github.com/sczhou/ProPainter_website"
+                                    target="_blank">source code</a>.
+                                Thank you!
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- custom js file  -->
+    <!-- <script defer src="./assets/js/fontawesome.all.min.js"></script> -->
+    <script src="./assets/js/bulma-carousel.min.js"></script>
+    <script src="./assets/js/bulma-slider.min.js"></script>
+    <script src="./assets/js/index.js"></script>
+    <script src="./assets/js/jquery.event.move.js"></script>
+    <script src="./assets/js/jquery.twentytwenty.js"></script>
+    <script>
+        $(function () {
+            $(".twentytwenty-container").twentytwenty();
+            // $(".twentytwenty-container", "#results-carousel").twentytwenty({default_offset_pct: 0.5, ratio: 0.5});
+        });
+    </script>
+</body>
+
+</html>
