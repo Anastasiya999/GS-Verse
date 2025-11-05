@@ -1,5 +1,5 @@
 # GS-Verse  
-[![arXiv](https://img.shields.io/badge/arXiv-2510.11878-red)](https://arxiv.org/abs/2510.11878) [![Demo Scenes](https://img.shields.io/badge/Demo%20Scenes-Google%20Drive-green)](https://drive.google.com/file/d/1W1AyAVohk6ITPe2Faz6F3SPZgpz2_edP/view?usp=sharing)
+[![arXiv](https://img.shields.io/badge/arXiv-2510.11878-red)](https://arxiv.org/abs/2510.11878) [![Demo Scenes](https://img.shields.io/badge/Demo%20Scenes-Google%20Drive-green)](https://drive.google.com/file/d/1W1AyAVohk6ITPe2Faz6F3SPZgpz2_edP/view?usp=sharing)  [![ProjectPage](https://img.shields.io/badge/Website-anastasiya999.github.io/GSVerse/-blue)](https://anastasiya999.github.io/GS-Verse/)
 
 
 This repository hosts the **official implementation** of the paper:  
