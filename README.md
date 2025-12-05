@@ -203,9 +203,12 @@ Now you can create your first **GS Verse** asset.
 ## Acknowledgments
 The code was developed based on an existing [Gaussian Splatting playground in Unity](https://github.com/aras-p/UnityGaussianSplatting), [gaussian-splatting](https://github.com/graphdeco-inria/gaussian-splatting) (3D) and [GaMeS](https://github.com/waczjoan/gaussian-mesh-splatting).
 
+This publication was funded by the program Excellence Initiative – Research University at the Jagiellonian University in Krakow  (Research Module 2025).
+
 The project “Effective rendering of 3D objects using Gaussian Splatting in an Augmented Reality environment” (FENG.02.02-IP.05-0114/23) is carried out within the First Team programme of the Foundation for Polish Science co-financed by the European Union under the European Funds for Smart Economy 2021-2027 (FENG).
 
 <div align="center">
+<img src="docs/Images/logoIDUJ.png" />
 <img src="docs/Images/fnp.png" />
 </div>
 
