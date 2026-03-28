@@ -97,6 +97,8 @@ namespace GaussianSplatting.Runtime
         {
             get
             {
+                if (m_ChunkData == null)
+                    return null; // chunk data is optional
                 if (m_SplatChunkData == null)
                     m_SplatChunkData = new GaussianSplatData(m_ChunkData);
                 return m_SplatChunkData;
