@@ -451,7 +451,7 @@ namespace GaussianSplatting.Editor
 
         void CreateScaleData(List<List<float>> scales, string filePath, ref Hash128 dataHash)
         {
-            int dataLen = scales.Count * GaussianSplatAsset.GetVectorSize(GaussianSplatAsset.VectorFormat.Norm11);
+            int dataLen = scales.Count * GaussianSplatAsset.GetVectorSize(m_FormatScale);
             int splatCount = scales.Count;
 
             NativeArray<float> flatScale = new(splatCount, Allocator.TempJob);
@@ -467,7 +467,7 @@ namespace GaussianSplatting.Editor
             CreateScaleDataJob job = new CreateScaleDataJob
             {
                 m_Input = flatScale,
-                m_FormatSize = 4,
+                m_FormatSize = GaussianSplatAsset.GetVectorSize(m_FormatScale),
                 m_Output = data
             };
             job.Schedule(splatCount, 8192).Complete();
@@ -477,6 +477,7 @@ namespace GaussianSplatting.Editor
             using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
             fs.Write(data);
 
+            flatScale.Dispose();
             data.Dispose();
         }
 
@@ -528,6 +529,7 @@ namespace GaussianSplatting.Editor
             using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
             fs.Write(data);
 
+            flatAlphas.Dispose();
             data.Dispose();
         }
 
