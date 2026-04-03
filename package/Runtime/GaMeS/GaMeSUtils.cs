@@ -403,9 +403,9 @@ namespace GaussianSplatting.Runtime.GaMeS
         }
 
 
-        public static NativeArray<float> DecodeScalesToNative(byte[] fileBytes, int numberOfSplats, Allocator allocator)
+        public static NativeArray<float> DecodeScalesToNative(byte[] fileBytes, int numberOfSplats, GaussianSplatAsset.VectorFormat scaleFormat, Allocator allocator)
         {
-            int vectorSize = GaussianSplatAsset.GetVectorSize(GaussianSplatAsset.VectorFormat.Norm11);
+            int vectorSize = GaussianSplatAsset.GetVectorSize(scaleFormat);
             int requiredLength = numberOfSplats * vectorSize;
 
 
@@ -429,8 +429,7 @@ namespace GaussianSplatting.Runtime.GaMeS
 
         public static NativeArray<float3> DecodeAlphasToNativeFloat3(byte[] fileBytes, int numFaces, int numPointsPerTriangle, Allocator allocator)
         {
-            int floatsPerPoint = 3; // each float3 = 3 floats
-            int bytesPerPoint = floatsPerPoint * GaussianSplatAsset.GetVectorSize(GaussianSplatAsset.VectorFormat.Norm11); // 3 floats * 4 bytes = 12 bytes
+            int bytesPerPoint = GaussianSplatAsset.GetVectorSize(GaussianSplatAsset.VectorFormat.Float32); // 12 bytes per float3
             int totalPoints = numFaces * numPointsPerTriangle;
             int expectedBytes = totalPoints * bytesPerPoint;
 

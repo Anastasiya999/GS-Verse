@@ -68,7 +68,7 @@ public class GaussianSplatAssetUpdater : IDisposable
         _decodedAlphasNative = GaMeSUtils.DecodeAlphasToNativeFloat3(_asset.alphaData.bytes, faceCountEstimate, _numberPtsPerTriangle, Allocator.Persistent);
         RegisterCleanup(() => { if (_decodedAlphasNative.IsCreated) _decodedAlphasNative.Dispose(); });
 
-        _decodedScalesNative = GaMeSUtils.DecodeScalesToNative(_asset.scaleData.bytes, _asset.splatCount, Allocator.Persistent);
+        _decodedScalesNative = GaMeSUtils.DecodeScalesToNative(_asset.scaleData.bytes, _asset.splatCount, _asset.scaleFormat, Allocator.Persistent);
         RegisterCleanup(() => { if (_decodedScalesNative.IsCreated) _decodedScalesNative.Dispose(); });
 
         // Initialize previous splats data as empty (will be set later)
