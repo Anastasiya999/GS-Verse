@@ -58,10 +58,12 @@ cd GS-Verse
 Open the project located at `projects/GaussianExample` in **Unity 2022.3** (other Unity 2022 versions may also work).
 
 Since the Gaussian Splat models are quite large, they are **not included** in this GitHub repository.
-To test the sample scenes, please download the assets from [this link](https://drive.google.com/file/d/1W1AyAVohk6ITPe2Faz6F3SPZgpz2_edP/view?usp=sharing). After downloading, place the contents as follows:
+To test the sample scenes, please download the assets from [this link](https://drive.google.com/file/d/1_Pc1qFRPlIcI1r96T-dDG-f-VzV962Zp/view?usp=sharing). After downloading, place the contents as follows:
 
 - Extract the contents of `RoomScenes/*` into `Assets/RoomScenes/`
 - Place the `Resources` folder under `Assets/`
+- Place the `RawData` folder under `Assets/RawData`
+- Place the `GaussianAssets` folder under `Assets/GaussianAssets`
 
 Your final directory structure should look like this:
 
@@ -70,7 +72,11 @@ Assets/
  ├── RoomScenes/
  │    └── [scene content files]
  └── Resources/
-      └── [resource files]
+ │    └── [resource files]
+ └── RawData /
+ │    └── [point_cloud, model_params files]
+ └── GaussianAssets /
+      └── [GS assets files]
 ```
 ⚠️ **Important:**  
 Unity performs mesh optimization and vertex modifications when importing `.obj` assets.
@@ -198,6 +204,9 @@ Now you can create your first **GS Verse** asset.
 1. In **Unity**, create a new **GameObject** in your scene.  
 2. Add the **Gaussian Splatting Renderer** component to it.  
 3. Assign the asset you created in the previous steps.
+
+### Updates
+- 03.03.2026: fixed creation high, very high quality GaMeS assets; updated drive link with new assets. 
 
 
 ## Acknowledgments
