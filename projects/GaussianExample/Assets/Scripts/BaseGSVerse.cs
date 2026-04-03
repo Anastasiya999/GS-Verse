@@ -215,7 +215,7 @@ public class GSBase : MonoBehaviour
         _decodedAlphasNative = GaMeSUtils.DecodeAlphasToNativeFloat3(alphaBytes, faceCountEstimate, numberPtsPerTriangle, Allocator.Persistent);
         RegisterNativeCleanup(() => { if (_decodedAlphasNative.IsCreated) _decodedAlphasNative.Dispose(); });
 
-        _decodedScalesNative = GaMeSUtils.DecodeScalesToNative(scaleBytes, _asset.splatCount, Allocator.Persistent);
+        _decodedScalesNative = GaMeSUtils.DecodeScalesToNative(scaleBytes, _asset.splatCount, _asset.scaleFormat, Allocator.Persistent);
         RegisterNativeCleanup(() => { if (_decodedScalesNative.IsCreated) _decodedScalesNative.Dispose(); });
     }
 
