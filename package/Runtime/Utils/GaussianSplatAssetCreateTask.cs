@@ -567,7 +567,6 @@ namespace GaussianSplatting.Runtime.Utils
             {
                 Texture2D tex = new Texture2D(width, height, GraphicsFormat.R32G32B32A32_SFloat, TextureCreationFlags.DontInitializePixels | TextureCreationFlags.DontUploadUponCreate);
                 tex.SetPixelData(data, 0);
-                EditorUtility.CompressTexture(tex, GraphicsFormatUtility.GetTextureFormat(gfxFormat), 100);
                 NativeArray<byte> cmpData = tex.GetPixelData<byte>(0);
                 colorData = CopyNativeArray(cmpData);
 
