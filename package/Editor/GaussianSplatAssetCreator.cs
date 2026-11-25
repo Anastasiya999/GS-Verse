@@ -15,7 +15,7 @@ using Unity.Mathematics;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
-using ThreeDeeBear.Models.Ply;
+
 
 namespace GaussianSplatting.Editor
 {
