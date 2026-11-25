@@ -26,6 +26,18 @@
 /projects/**/obj/*
 *.sln.DotSettings.user
 
+# Downloadable asset pack (see README)
+/projects/**/Assets/_Project/Scenes/
+/projects/**/Assets/_Project/Scenes.meta
+/projects/**/Assets/_Project/Environments/
+/projects/**/Assets/_Project/Environments.meta
+/projects/**/Assets/_Project/RawData/
+/projects/**/Assets/_Project/RawData.meta
+/projects/**/Assets/_Project/Resources/
+/projects/**/Assets/_Project/Resources.meta
+/projects/**/Assets/_Project/GaussianAssets/
+/projects/**/Assets/_Project/GaussianAssets.meta
+
 # This .gitignore file should be placed at the root of your Unity project 
 directory
 #
